@@ -105,6 +105,7 @@ bool SpheresOverlap::compute(const std::shared_ptr<BlockTask> &task) const
         lines = result.first;
         lineThicknesses = result.second;
     }
+    /*
     auto lCoords = Coords::as(lines);
 
     std::cout << "Duplicate lines with different thicknesses: " << std::endl;
@@ -125,7 +126,7 @@ bool SpheresOverlap::compute(const std::shared_ptr<BlockTask> &task) const
                       << ", indices: " << i1 << " "  << i2 << std::endl;
         }
     }
-    /*for (auto i = 0; i < lines->cl().size(); i += 2) {
+    for (auto i = 0; i < lines->cl().size(); i += 2) {
         for (auto j = i + 1; j < lines->cl().size(); j += 2) {
             auto i1 = lines->cl()[i];
             auto i2 = lines->cl()[i + 1];
@@ -142,14 +143,14 @@ bool SpheresOverlap::compute(const std::shared_ptr<BlockTask> &task) const
                               << lineThicknesses->x()[j / 2] << std::endl;
             }
         }
-    }*/
+    }
 
     auto myMin =
         *std::min_element(lineThicknesses->x().data(), lineThicknesses->x().data() + lineThicknesses->x().size() - 1);
     auto myMax =
         *std::max_element(lineThicknesses->x().data(), lineThicknesses->x().data() + lineThicknesses->x().size() - 1);
 
-    std::cout << "Thickness min: " << myMin << ", max: " << myMax << std::endl;
+    std::cout << "Thickness min: " << myMin << ", max: " << myMax << std::endl;*/
 
     if (lines->getNumCoords()) {
         if (mappedData) {
