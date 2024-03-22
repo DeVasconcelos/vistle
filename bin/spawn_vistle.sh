@@ -14,7 +14,7 @@
 # be multiple nsys-versions on a system which thens leads to errors), see:
 # https://forums.developer.nvidia.com/t/nsight-system-runtime-error-and-reported-quaddcommon-notfoundexception/193964/9
 NSYS_BIN="$HOME/Software/nsight/pkg/nvidia-nsight/opt/nvidia/nsight-systems/2023.4.1/bin/nsys"
-PROFILER_INVOCATION="$NSYS_BIN profile --gpu-metrics-device=all --stats true -o $(basename -- $1)-$$ --trace=cuda"
+PROFILER_INVOCATION="$NSYS_BIN profile --gpu-metrics-device=all -o $(basename -- $1)-$$ --trace=cuda,nvtx"
 
 # environment variables to copy to all ranks
 envvars="PATH"

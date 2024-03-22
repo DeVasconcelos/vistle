@@ -1,3 +1,5 @@
+#include <nvtx3/nvtx3.hpp>
+
 #include <vistle/core/spheres.h>
 #include <vistle/core/uniformgrid.h>
 
@@ -55,6 +57,7 @@ struct CreateConnectionLinesWorklet: public vtkm::worklet::WorkletMapField {
 VTKM_CONT PointLocatorCellLists VtkmSpheresOverlap::CreateSearchGrid(const vtkm::cont::CoordinateSystem &coordinates,
                                                                      const vtkm::cont::Field &radii)
 {
+    nvtx3::scoped_range(__func__);
     PointLocatorCellLists result;
     result.SetCoordinates(coordinates);
     result.SetRadii(radii.GetData());
@@ -70,6 +73,7 @@ VTKM_CONT PointLocatorCellLists VtkmSpheresOverlap::CreateSearchGrid(const vtkm:
 VTKM_CONT vtkm::cont::ArrayHandle<vtkm::Id>
 VtkmSpheresOverlap::CountOverlapsPerPoint(const PointLocatorCellLists &pointLocator)
 {
+    nvtx3::scoped_range(__func__);
     vtkm::cont::ArrayHandle<vtkm::Id> result;
     this->Invoke(CountOverlapsWorklet{}, pointLocator.GetCoordinates(), &pointLocator, result);
     return result;
@@ -80,6 +84,7 @@ VTKM_CONT void VtkmSpheresOverlap::CreateConnectionLines(const PointLocatorCellL
                                                          vtkm::cont::ArrayHandle<vtkm::Id> &linesConnectivity,
                                                          vtkm::cont::ArrayHandle<vtkm::FloatDefault> &linesThicknesses)
 {
+    nvtx3::scoped_range(__func__);
     // mapping is not 1-to-1 since a sphere can overlap with arbitrarily many other spheres (including none)
     auto spheresToLinesMapping = CreateConnectionLinesWorklet::MakeScatter(overlapsPerPoint);
 
@@ -91,6 +96,8 @@ VTKM_CONT vtkm::cont::DataSet CreateDataset(const vtkm::cont::CoordinateSystem &
                                             const vtkm::cont::ArrayHandle<vtkm::Id> &linesConnectivity,
                                             const vtkm::cont::ArrayHandle<vtkm::FloatDefault> &linesThicknesses)
 {
+    nvtx3::scoped_range(__func__);
+
     vtkm::cont::CellSetSingleType<> linesCellSet;
     linesCellSet.Fill(linesConnectivity.GetNumberOfValues(), vtkm::CELL_SHAPE_LINE, 2, linesConnectivity);
 
@@ -108,6 +115,8 @@ VTKM_CONT vtkm::cont::DataSet CreateDataset(const vtkm::cont::CoordinateSystem &
 
 VTKM_CONT vtkm::cont::DataSet VtkmSpheresOverlap::DoExecute(const vtkm::cont::DataSet &spheres)
 {
+    nvtx3::scoped_range(__func__);
+
     auto sphereCenters = spheres.GetCoordinateSystem();
 
     auto pointLocator = CreateSearchGrid(sphereCenters, spheres.GetPointField("radius"));

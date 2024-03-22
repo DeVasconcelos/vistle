@@ -72,6 +72,9 @@ if(USE_SZ3)
     add_subdirectory(sz3)
 endif()
 
+# for profiling only
+add_subdirectory(NVTX/c)
+
 if(VISTLE_INTERNAL_ZFP)
     set(BUILD_TESTING
         OFF
