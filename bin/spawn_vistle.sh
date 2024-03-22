@@ -10,6 +10,12 @@
 
 #APRUN_FLAGS="-j2 -cc 0-11,24-35:12-23,36-47" # enable hyper-threading
 
+# when calling nsys from a bash script, it's best to add its entire path (as there could
+# be multiple nsys-versions on a system which thens leads to errors), see:
+# https://forums.developer.nvidia.com/t/nsight-system-runtime-error-and-reported-quaddcommon-notfoundexception/193964/9
+NSYS_BIN="$HOME/Software/nsight/pkg/nvidia-nsight/opt/nvidia/nsight-systems/2023.4.1/bin/nsys"
+PROFILER_INVOCATION="$NSYS_BIN profile --gpu-metrics-device=all --stats true -o $(basename -- $1)-$$ --trace=cuda"
+
 # environment variables to copy to all ranks
 envvars="PATH"
 envvars="$envvars PYTHONHOME PYTHONPATH"
@@ -89,7 +95,7 @@ esac
 
 WRAPPER="valgrind --track-origins=yes --read-var-info=yes --read-inline-info=yes --error-limit=no"
 WRAPPER="valgrind --max-threads=1024"
-WRAPPER="nsys profile -o $(basename -- $1)-$$ --trace=cuda,mpi"
+WRAPPER="$PROFILER_INVOCATION"
 LAUNCH=""
 export TSAN_OPTIONS="history_size=7 force_seq_cst_atomics=1 second_deadlock_stack=1"
 
