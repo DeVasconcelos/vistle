@@ -10,11 +10,20 @@
 
 #APRUN_FLAGS="-j2 -cc 0-11,24-35:12-23,36-47" # enable hyper-threading
 
-# when calling nsys from a bash script, it's best to add its entire path (as there could
-# be multiple nsys-versions on a system which thens leads to errors), see:
-# https://forums.developer.nvidia.com/t/nsight-system-runtime-error-and-reported-quaddcommon-notfoundexception/193964/9
-NSYS_BIN="$HOME/Software/nsight/pkg/nvidia-nsight/opt/nvidia/nsight-systems/2023.4.1/bin/nsys"
-PROFILER_INVOCATION="$NSYS_BIN profile --gpu-metrics-device=all -o $(basename -- $1)-$$ --trace=cuda,nvtx"
+# ----- NVIDIA GPU PROFILING -----
+
+# NOTE: When calling nsys from a bash script, it's best to add its entire path (as there could
+#       be multiple nsys-versions on a system which thens leads to errors), see:
+#       https://forums.developer.nvidia.com/t/nsight-system-runtime-error-and-reported-quaddcommon-notfoundexception/193964/9
+# NSYS_BIN="$HOME/Software/nsight/pkg/nvidia-nsight/opt/nvidia/nsight-systems/2023.4.1/bin/nsys"
+# PROFILER_INVOCATION="$NSYS_BIN profile --gpu-metrics-device=all -o $(basename -- $1)-$$ --trace=cuda,nvtx"
+
+# NOTE: Make sure you have the permission to access the NVIDIA GPU Performance Counters on the system
+#       you want to use the ncu profiler. Check here how to enable it (temporarily or permanently):
+#       https://developer.nvidia.com/ERR_NVGPUCTRPERM
+PROFILER_INVOCATION="ncu -o $(basename -- $1)-$$ --set detailed --nvtx"
+
+# ----- NVIDIA GPU PROFILING -----
 
 # environment variables to copy to all ranks
 envvars="PATH"
