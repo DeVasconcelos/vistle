@@ -18,10 +18,12 @@
 # NSYS_BIN="$HOME/Software/nsight/pkg/nvidia-nsight/opt/nvidia/nsight-systems/2023.4.1/bin/nsys"
 # PROFILER_INVOCATION="$NSYS_BIN profile --gpu-metrics-device=all -o $(basename -- $1)-$$ --trace=cuda,nvtx"
 
-# NOTE: Make sure you have the permission to access the NVIDIA GPU Performance Counters on the system
-#       you want to use the ncu profiler. Check here how to enable it (temporarily or permanently):
-#       https://developer.nvidia.com/ERR_NVGPUCTRPERM
-PROFILER_INVOCATION="ncu -o $(basename -- $1)-$$ --set detailed --nvtx"
+# TO PREPARE: - make sure you have the permission to access the NVIDIA GPU Performance Counters on the system
+#               you want to use the ncu profiler. Check here how to enable it (temporarily or permanently):
+#               https://developer.nvidia.com/ERR_NVGPUCTRPERM
+#
+#             - to enable the "Source" view in ncu's "Source" page, recompile vistle with NVCC_PREPEND_FLAGS="-lineinfo"
+PROFILER_INVOCATION="ncu -o $(basename -- $1)-$$ --set full --import-source yes"
 
 # ----- NVIDIA GPU PROFILING -----
 
