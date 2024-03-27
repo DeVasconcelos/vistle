@@ -17,3 +17,7 @@
 /.ipynb_checkpoints
 **/.nfs*
 __pycache__
+
+# profiling output
+*.ncu-rep
+*.nsys-rep
