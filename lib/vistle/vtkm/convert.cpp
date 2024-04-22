@@ -33,8 +33,12 @@ VtkmTransformStatus coordinatesAndNormalsToVtkm(Object::const_ptr grid, vtkm::co
 
         vtkmDataset.AddCoordinateSystem(coordinateSystem);
 
-        if (coordinates->normals())
-            fieldToVtkm(coordinates->normals(), vtkmDataset, "normals");
+        if (coordinates->normals()) {
+            auto normals = coordinates->normals();
+            auto mapping = normals->guessMapping(coordinates);
+            fieldToVtkm(normals, vtkmDataset, "normals", mapping);
+        }
+
 
         vistle::Vec<Scalar>::const_ptr radius;
         if (auto lines = Lines::as(grid)) {
@@ -107,13 +111,14 @@ VtkmTransformStatus geometryToVtkm(Object::const_ptr grid, vtkm::cont::DataSet &
 
 struct FieldToVtkm {
     const DataBase::const_ptr &m_field;
+    DataBase::Mapping m_mapping;
     vtkm::cont::DataSet &m_dataset;
     const std::string &m_name;
     VtkmTransformStatus &m_status;
 
     FieldToVtkm(const DataBase::const_ptr &field, vtkm::cont::DataSet &dataset, const std::string &name,
-                VtkmTransformStatus &status)
-    : m_field(field), m_dataset(dataset), m_name(name), m_status(status)
+                vistle::DataBase::Mapping mapping, VtkmTransformStatus &status)
+    : m_field(field), m_dataset(dataset), m_name(name), m_mapping(mapping), m_status(status)
     {}
 
     template<typename ScalarType>
@@ -133,10 +138,12 @@ struct FieldToVtkm {
             return;
         }
 
-        auto mapping = m_field->guessMapping();
-        if (mapping == DataBase::Vertex) {
+        auto mapping = this->m_mapping;
+        if (mapping == DataBase::Unspecified) {
+            mapping = m_field->guessMapping();
+        }
+        if (mapping == vistle::DataBase::Vertex) {
             m_dataset.AddPointField(m_name, ah);
-
         } else {
             m_dataset.AddCellField(m_name, ah);
         }
@@ -146,10 +153,10 @@ struct FieldToVtkm {
 };
 
 VtkmTransformStatus fieldToVtkm(const DataBase::const_ptr &field, vtkm::cont::DataSet &vtkmDataset,
-                                const std::string &fieldName)
+                                const std::string &fieldName, vistle::DataBase::Mapping mapping)
 {
     VtkmTransformStatus status = VtkmTransformStatus::UNSUPPORTED_FIELD_TYPE;
-    boost::mpl::for_each<Scalars>(FieldToVtkm(field, vtkmDataset, fieldName, status));
+    boost::mpl::for_each<Scalars>(FieldToVtkm(field, vtkmDataset, fieldName, mapping, status));
 
     return status;
 }
@@ -417,7 +424,7 @@ void coordinatesAndNormalsToVistle(vtkm::cont::DataSet &dataset, Object::ptr res
             if (auto rvec = vistle::Vec<vistle::Scalar>::as(radius)) {
                 auto r = std::make_shared<vistle::Vec<Scalar>>(0);
                 r->d()->x[0] = rvec->d()->x[0];
-                // don't use setNormals() in order to bypass check() on object before updateMeta()
+                // don't use setRadius() in order to bypass check() on object before updateMeta()
                 if (auto lines = Lines::as(result)) {
                     lines->d()->radius = r;
                 }
