@@ -1,3 +1,5 @@
+#include <nvtx3/nvtx3.hpp>
+
 #include <vistle/alg/objalg.h>
 #include <vistle/core/triangles.h>
 #include <vistle/core/unstr.h>
@@ -272,6 +274,7 @@ Object::ptr IsoSurfaceVtkm::work(vistle::Object::const_ptr grid, vistle::DataBas
 
 bool IsoSurfaceVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) const
 {
+    nvtx3::scoped_range(__func__);
     // make sure input data is supported
     auto isoData = task->expect<Vec<Scalar>>("data_in");
     if (!isoData) {
