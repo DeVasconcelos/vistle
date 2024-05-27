@@ -283,9 +283,11 @@ void shm_array<T, allocator>::reserve_or_shrink(const size_t capacity)
 
     PROF_SCOPE("shm_array::reserve_or_shrink()");
 #ifdef NO_SHMEM
-    updateFromHandle(true);
-    m_handle.Allocate(capacity, vtkm::CopyFlag::On);
-    m_data = reinterpret_cast<T *>(m_handle.GetWritePointer());
+    if (capacity > 0) {
+        updateFromHandle(true);
+        m_handle.Allocate(capacity, vtkm::CopyFlag::On);
+        m_data = reinterpret_cast<T *>(m_handle.GetWritePointer());
+    }
     m_capacity = capacity;
 #else
     pointer new_data = capacity > 0 ? m_allocator.allocate(capacity) : nullptr;
