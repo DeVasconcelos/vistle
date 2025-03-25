@@ -5,41 +5,39 @@ Vistle makes use of the portable toolkit [VTK-m](https://m.vtk.org/) which allow
 
 ## Overview
 - [The VtkmModule Class](#the-vtkmmodule-class)
-- [Example 1: A Simple GPU Module](#example-1-a-simple-gpu-module)
-- [Example 2: A More Advanced GPU Module](#example-2-a-more-advanced-gpu-module)
+- [Example 1: A Basic GPU Module](#example-1-a-basic-gpu-module)
+- [Example 2: Extending the Core Functionality](#example-2-extending-the-core-functionality)
 - [Example 3: A Custom VTK-m Filter](#example-3-a-custom-vtk-m-filter)
 - [How to Compile Vistle to Run Code on NVIDIA GPUs](#how-to-compile-vistle-to-run-code-on-nvidia-gpus)
 
 
 ## The VtkmModule Class
 
-The `VtkmModule` class is the base class for VTK-m modules in Vistle. It is designed to make adding new VTK-m algorithms, so-called [filters](https://vtk-m.readthedocs.io/en/v2.2.0/provided-filters.html), as simple as possible by providing basic functionality for handling the input data, passing it to the filter implemented by the child class, and writing the filter result to the output ports. At the same time, it is designed to be flexible allowing the child class to customize and extend these processes as needed.
-
-### Key Features of `VtkmModule`
-
-- Reads data from input ports, validates it, and transforms it into a VTK-m dataset.
-- Applies a VTK-m filter using the `runFilter` method, which must be implemented by child classes.
-- Transforms the result back into Vistle objects and writes it to the output ports.
+The `VtkmModule` class is the base class for VTK-m modules in Vistle. It is designed to make adding new VTK-m algorithms, so-called [filters](https://vtk-m.readthedocs.io/en/v2.2.0/provided-filters.html), as simple as possible by providing core functionality for handling the input data, passing it to the filter implemented by the child class, and writing the filter result to the output ports. At the same time, it is meant to be flexible, allowing the child class to customize and extend these processes, if desired.
 
 ### The Constructor
-A typical VTK-m module consists of one input port and one output port, but additional ports can be added by specifying the desired number in the constructor. All data on the ports must be defined on the same grid.
 
-### The `setUpFilter` method
+By default, a VTK-m module consists of one input port and one output port, but additional ports can be added by specifying the desired number in the base constructor (`numPorts`). Note that all data on the input ports must be defined on the same grid, as the module will throw an error, otherwise.
+
+Many VTK-m filters work on data fields, so, by default, a VTK-m module expects the data at the input ports to contain mapped data in addition to a grid and will throw an error if there is none. If desired, the child class can remove this requirement by setting `requireMappedData` to `false`.
 
 ```cpp
 VtkmModule(const std::string &name, int moduleID, mpi::communicator comm, int numPorts = 1, bool requireMappedData = true);
 ```
 
+### The `setUpFilter` method
+
+
 ### Preparing the input data
 
 ### Preparing the output data
 
-## Example 1: A Simple GPU Module
+## Example 1: A Basic GPU Module
 - `setRunFilter`
 - add module paramters
 - making changes to the construtor
 
-## Example 2: A More Advanced GPU Module
+## Example 2: Extending the Core Functionality
 - overriding prepareInput and prepareOutput methods
 
 ## Example 3: A Custom VTK-m Filter
