@@ -1,19 +1,22 @@
 # How to Write a GPU Module
 
-This guide explains how to write Vistle modules that can be run on the GPU.    
+This guide explains how to write Vistle modules that can be run on the GPU. It assumes you are familiar with the [basics on how to write a Vistle module](implementation-basics.md).   
+
 Vistle makes use of the portable toolkit [VTK-m](https://m.vtk.org/) which allows running scientific visualization algorithms on various devices, including GPUs, and is designed to keep data transfers between devices at a minimum.    
 
 ## Overview
 - [The VtkmModule Class](#the-vtkmmodule-class)
-- [Example 1: A Basic GPU Module](#example-1-a-basic-gpu-module)
+- [Example 1: Basic Usage](#example-1-basic-usage)
 - [Example 2: Extending the Core Functionality](#example-2-extending-the-core-functionality)
-- [Example 3: A Custom VTK-m Filter](#example-3-a-custom-vtk-m-filter)
+- [Custom VTK-m Filters](#custom-vtk-m-filters)
 - [How to Compile Vistle to Run Code on NVIDIA GPUs](#how-to-compile-vistle-to-run-code-on-nvidia-gpus)
 
 
 ## The VtkmModule Class
 
 The `VtkmModule` class is the base class for VTK-m modules in Vistle. It is designed to make adding new VTK-m algorithms, so-called [filters](https://vtk-m.readthedocs.io/en/v2.2.0/provided-filters.html), as simple as possible by providing core functionality for handling the input data, passing it to the filter implemented by the child class, and writing the filter result to the output ports. At the same time, it is meant to be flexible, allowing the child class to customize and extend these processes, if desired.
+
+**Note:** The `VtkmModule` class is a child of the `Module` class, i.e.,  many of its features, like the functionality for adding module parameters, can be used by VTK-m modules, too.
 
 ### The Constructor
 
@@ -39,27 +42,161 @@ If the VTK-m module has multiple input ports, the filter will only be applied to
 
 ### Preparing the Input Data
 
-The `prepareInputGrid` transforms the input grid into a VTK-m cellset and adds it to the VTK-m dataset `dataset`. Similarly, `prepareOutputGrid`, which is called for each field, transforms the input fields into VTK-m array handles and adds them to `dataset` as well. The filter will, subsequently, be applied to `dataset`.
+The `prepareInputGrid` transforms the input grid into a VTK-m cellset and adds it to the VTK-m dataset `dataset`. Similarly, `prepareOutputGrid`, which is called once per field, transforms the input fields into VTK-m array handles and adds them to `dataset` as well. The filter will, subsequently, be applied to `dataset`.
 ```cpp
 virtual ModuleStatusPtr prepareInputGrid(const vistle::Object::const_ptr &grid, vtkm::cont::DataSet &dataset) const;
 virtual ModuleStatusPtr prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid, const vistle::DataBase::const_ptr &field, std::string &fieldName, vtkm::cont::DataSet &dataset) const;
 ```
 
 A VTK-m module only performs very basic checks on the input ports while reading in the data, i.e., in the `readInPorts` method: It ensures each input port contains data as long as its corresponding output port is connected. Additionally, it makes sure all data fields are defined on the same grid and that at least one input grid provides an input grid.   
-Some filters might, however, require additional checks. These can be added by overridding `prepareInputGrid` and/or `prepareInputField` as needed.
+Some filters might, however, require additional checks on the input data. These can be added by overriding `prepareInputGrid` and/or `prepareInputField` as needed.
 
 ### Preparing the Output Data
 
-## Example 1: A Basic GPU Module
-- `setRunFilter`
-- add module paramters
-- making changes to the construtor
+`prepareOutputGrid` and `prepareOutputField`, which is called once per field, transform the filter results that will be added to the output ports back into the Vistle format. The output data field, which contains the output grid, is added to the ports. If `requireMappedData` is `false`, only the output grid is added.
+
+```cpp
+virtual vistle::Object::ptr prepareOutputGrid(const vtkm::cont::DataSet &dataset, const vistle::Object::const_ptr &inputGrid) const;
+virtual vistle::DataBase::ptr prepareOutputField(const vtkm::cont::DataSet &dataset, const vistle::Object::const_ptr &inputGrid, const vistle::DataBase::const_ptr &inputField, const std::string &fieldName, const vistle::Object::ptr &outputGrid) const;
+```
+
+By default, the VTK-m module simply copies the attributes from the input grid and fields to the output grid and fields, respectively. To account for possible attribute changes after applying the filter, e.g., when the filter changes the field's mapping from element- to cell-based, the child class can override these two methods as needed.
+
+## Example 1: Basic usage
+
+This first example illustrates how to use the base functionalities of the `VtkmModule` class. It will create a VTK-m module **MyIsosurfaceVtkm** which calls [VTK-m's Contour filter](https://vtk-m.readthedocs.io/en/v2.2.0/provided-filters.html#contour) to generate an isosurface.
+
+
+### The Header
+Let's first inspect the new module's header file:
+
+```cpp
+#ifndef VISTLE_MYISOSURFACEVTKM_MYISOSURFACEVTKM_H
+#define VISTLE_MYISOSURFACEVTKM_MYISOSURFACEVTKM_H
+
+#include <vistle/vtkm/vtkm_module.h>
+
+class MyIsosurfaceVtkm: public VtkmModule {
+public:
+    MyIsosurfaceVtkm(const std::string &name, int moduleID, mpi::communicator comm);
+    ~MyIsosurfaceVtkm();
+
+private:
+    vistle::FloatParameter *m_isovalue;
+
+    std::unique_ptr<vtkm::filter::Filter> setUpFilter() const override;
+};
+
+#endif
+```
+
+As the goal is to use VTK-m to run the algorithm on the GPU, the module inherits from the `VtkmModule` class which defined in `vistle/vtkm/vtkm_module.h`:
+
+```cpp
+class MyIsosurfaceVtkm: public VtkmModule {
+```
+
+As a child of said class, `MyIsosurfaceVtkm` must override the `setUpFilter()` method to prepare the desired filter to be applied to the input dataset:
+```cpp
+std::unique_ptr<vtkm::filter::Filter> setUpFilter() const override;
+```
+
+The Contour filter needs an isovalue. Since `VtkmModule` inherits from the `Module` class, we can simply define a float parameter for this purpose:
+```cpp
+vistle::FloatParameter *m_isovalue;
+```
+
+### The Source File
+
+Next, the corresponding source file will be discussed:
+```cpp
+#include <vtkm/filter/contour/Contour.h>
+#include "MyIsosurfaceVtkm.h"
+
+MODULE_MAIN(MyIsosurfaceVtkm)
+
+using namespace vistle;
+
+MyIsosurfaceVtkm::MyIsosurfaceVtkm(const std::string &name, int moduleID, mpi::communicator comm)
+: VtkmModule(name, moduleID, comm, 2)
+{
+    m_isovalue = addFloatParameter("isovalue", "isovalue", 0.0);
+}
+
+MyIsosurfaceVtkm::~MyIsosurfaceVtkm()
+{}
+
+std::unique_ptr<vtkm::filter::Filter> MyIsosurfaceVtkm::setUpFilter() const
+{
+    auto filter = std::make_unique<vtkm::filter::contour::Contour>();
+    filter->SetIsoValue(m_isovalue->getValue());
+
+    return filter;
+}
+
+```
+
+Like any Vistle module, VTK-m modules must also call the `MODULE_MAIN` function to make sure it is integrated correctly into the software:
+```cpp
+MODULE_MAIN(MyIsosurfaceVtkm)
+```
+
+The child constructor must call its parent's constructor:
+```cpp
+MyIsosurfaceVtkm::MyIsosurfaceVtkm(const std::string &name, int moduleID, mpi::communicator comm)
+: VtkmModule(name, moduleID, comm, 2)
+{
+    m_isovalue = addFloatParameter("isovalue", "isovalue", 0.0);
+}
+```
+The base constructor lets us choose the number of ports. Here, the number of ports is 2. This means that the Contour filter will use the data field on the first input port to create the isosurface. The data on the second port will then simply be mapped to the resulting geometry.   
+The child constructor can, e.g., be used to define module parameters like the isovalue.
+
+Finally, we create a Contour filter in the child's `setUpFilter` method, pass the isovalue to it and return it:
+
+```cpp
+std::unique_ptr<vtkm::filter::Filter> MyIsosurfaceVtkm::setUpFilter() const
+{
+    auto filter = std::make_unique<vtkm::filter::contour::Contour>();
+    filter->SetIsoValue(m_isovalue->getValue());
+
+    return filter;
+}
+```
+
+### Adding the Module to Vistle
+
+Adding a VTK-m module to Vistle is very similar to adding a regular module to Vistle. In the module's `CMakeLists.txt`, we call the `add_vtkm_module` target which makes sure the correct VTK-m libraries are loaded in addition to all necessary Vistle libraries:
+```cmake
+add_vtkm_module(MyIsosurfaceVtkm "Basic GPU module using VTK-m's Contour filter" MyIsosurfaceVtkm.h MyIsosurfaceVtkm.cpp)
+```
+
+Then, we must choose the module category which fits best, and add the new subdirectory to the corresponding `CMakeLists.txt` file:
+```cmake
+add_subdirectory(MyIsosurfaceVtkm)
+```
+
+### The Result
+
+The code above produces a Vistle module **MyIsosurfaceVtkm** which consists of two input and output ports as well as a float parameter to set the isovalue and which calculates the isosurface using VTK-m's Contour filter.
+
+The data field on the first input port is used to calculate the isosurface. In the following example workflow, **MyIsosurfaceVtkm** reads in the data field named *scalar* and uses it to create an isosurface of isovalue 1.1:
+
+![](myIsosurfaceVtkm1.png)
+
+Since **scalar** is the data field on the first input port and was thus used as the filter's active field, the data field on the first output port is uniform on the resulting output geometry.
+
+For comparison, a second input field called `vector_z` is connected to **IsosurfaceVtkm** in the following example workflow:
+![](myIsosurfaceVtkm2.png)
+
+The resulting geometry remains the same because the data on the first input port and the isovalue have not changed. The second output port returns the data field `vector_z` mapped to the output grid, which leads to a different coloring of the geometry.
 
 ## Example 2: Extending the Core Functionality
 - overriding prepareInput and prepareOutput methods
 
-## Example 3: A Custom VTK-m Filter
+## Custom VTK-m Filters
 
-To learn more about using VTK-m filters check out [VTK-m's user guide](https://vtk-m.readthedocs.io/en/v2.2.0/basic-filter-impl.html).
+For simplicity, predefined VTK-m filters have been used for the two examples above. Please note, that `VtkmModule` can, of course, also be used to add custom VTK-m filters to Vistle. To learn more about implementing custom VTK-m filters, check out [VTK-m's user guide](https://vtk-m.readthedocs.io/en/v2.2.0/basic-filter-impl.html).
+
 
 ## How to Compile Vistle to Run Code on NVIDIA GPUs
