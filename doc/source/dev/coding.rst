@@ -6,5 +6,6 @@ Programming Guide
 
    implementation/implementation-basics
    implementation/implementation-reader
+   implementation/implementation-gpu
    coding/coding-recipes
    coding/coding-style
