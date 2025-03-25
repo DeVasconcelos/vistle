@@ -60,7 +60,7 @@ virtual vistle::Object::ptr prepareOutputGrid(const vtkm::cont::DataSet &dataset
 virtual vistle::DataBase::ptr prepareOutputField(const vtkm::cont::DataSet &dataset, const vistle::Object::const_ptr &inputGrid, const vistle::DataBase::const_ptr &inputField, const std::string &fieldName, const vistle::Object::ptr &outputGrid) const;
 ```
 
-By default, the VTK-m module simply copies the attributes from the input grid and fields to the output grid and fields, respectively. To account for possible attribute changes after applying the filter, e.g., when the filter changes the field's mapping from element- to cell-based, the child class can override these two methods as needed.
+By default, the VTK-m module simply copies the attributes from the input grid and fields to the output grid and fields, respectively. It also sets the output field's grid to the output grid. To account for possible attribute changes after applying the filter, e.g., when the filter changes the field's mapping from element- to cell-based, the child class can override these two methods as needed.
 
 ## Example 1: Basic usage
 
@@ -192,11 +192,171 @@ For comparison, a second input field called `vector_z` is connected to **Isosurf
 The resulting geometry remains the same because the data on the first input port and the isovalue have not changed. The second output port returns the data field `vector_z` mapped to the output grid, which leads to a different coloring of the geometry.
 
 ## Example 2: Extending the Core Functionality
-- overriding prepareInput and prepareOutput methods
+
+In this second example, the child class will change the methods for handling its input and output data. The new class **MyCertToVellVtkm** will call the [Point Average filter](https://vtk-m.readthedocs.io/en/v2.2.0/provided-filters.html#point-average) to transform a cell-based data field into an equivalent vertex-based field. It, however, only applies the filter if the input data is cell-based. If not, it simply adds the input field to the output port.
+
+### The Header File
+
+To implement the desired behaviour, `MyCellToVertVtkm` overrides the `prepareInputField`, `prepareOutputGrid` and `prepareOutputField` methods:
+
+```cpp
+#ifndef VISTLE_MYCELLTOVERTVTKM_MYCELLTOVERTVTKM_H
+#define VISTLE_MYCELLTOVERTVTKM_MYCELLTOVERTVTKM_H
+
+#include <array>
+#include <vistle/vtkm/vtkm_module.h>
+
+class MyCellToVertVtkm: public VtkmModule {
+public:
+    MyCellToVertVtkm(const std::string &name, int moduleID, mpi::communicator comm);
+    ~MyCellToVertVtkm();
+
+private:
+    ModuleStatusPtr prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid, const vistle::DataBase::const_ptr &field, std::string &fieldName,vtkm::cont::DataSet &dataset) const override;
+
+    std::unique_ptr<vtkm::filter::Filter> setUpFilter() const override;
+
+    vistle::Object::ptr prepareOutputGrid(const vtkm::cont::DataSet &dataset, vistle::Object::const_ptr &inputGrid) const override;
+
+    vistle::DataBase::ptr prepareOutputField(const vtkm::cont::DataSet &dataset, const vistle::Object::const_ptr &inputGrid, const vistle::DataBase::const_ptr &inputField, const std::string &fieldName, const vistle::Object::ptr &outputGrid) const override;
+};
+
+#endif
+```
+
+### The Source File
+
+The following is **MyCellToVertVtkm**'s complete source file. In this section, the overridden methods will be explained one by one.
+
+```cpp
+#include <vtkm/filter/contour/Contour.h>
+#include <vtkm/filter/field_conversion/PointAverage.h>
+
+#include "MyCellToVertVtkm.h"
+
+MODULE_MAIN(MyCellToVertVtkm)
+
+using namespace vistle;
+
+MyCellToVertVtkm::MyCellToVertVtkm(const std::string &name, int moduleID, mpi::communicator comm)
+: VtkmModule(name, moduleID, comm)
+{}
+
+MyCellToVertVtkm::~MyCellToVertVtkm()
+{}
+
+std::unique_ptr<vtkm::filter::Filter> MyCellToVertVtkm::setUpFilter() const
+{
+    return std::make_unique<vtkm::filter::field_conversion::PointAverage>();
+}
+
+ModuleStatusPtr MyCellToVertVtkm::prepareInputField(const Port *port, const Object::const_ptr &grid,
+                                                    const DataBase::const_ptr &field, std::string &fieldName,
+                                                    vtkm::cont::DataSet &dataset) const
+{
+    if (field->guessMapping(grid) == DataBase::Element) {
+        return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
+    }
+    return Info("No need to apply filter to port " + port->getName());
+}
+
+Object::ptr MyCellToVertVtkm::prepareOutputGrid(const vtkm::cont::DataSet &dataset,
+                                                const Object::const_ptr &inputGrid) const
+{
+    return nullptr;
+}
+
+
+DataBase::ptr MyCellToVertVtkm::prepareOutputField(const vtkm::cont::DataSet &dataset,
+                                                   const Object::const_ptr &inputGrid,
+                                                   const DataBase::const_ptr &inputField, const std::string &fieldName,
+                                                   const Object::ptr &outputGrid) const
+{
+    // if filter was applied ...
+    if (dataset.HasField(fieldName)) {
+        // ... add its output to the output port
+        auto outputField = VtkmModule::prepareOutputField(dataset, inputGrid, inputField, fieldName, outputGrid);
+        outputField->setMapping(DataBase::Vertex);
+        outputField->setGrid(inputGrid);
+        return outputField;
+    } else {
+        // ... otherwise just copy the input field
+        auto ndata = inputField->clone();
+        ndata->setGrid(inputGrid);
+        updateMeta(ndata);
+        return ndata;
+    }
+}
+```
+
+Like any VTK-m module, **MyCellToVertVtkm** must define and set up its desired filter in the `setUpFilter()` method:
+
+```cpp
+std::unique_ptr<vtkm::filter::Filter> MyCellToVertVtkm::setUpFilter() const
+{
+    return std::make_unique<vtkm::filter::field_conversion::PointAverage>();
+}
+```
+
+Before transforming the input field into a VTK-m field, **MyCellToVertVtkm** first determines the field's mapping using the `guessMapping` method. If the field is element-based (=cell-based), the parent's `prepareInputField` method is called to add the field to the VTK-m dataset that will be passed to the VTK-m filter. Otherwise, nothing happens, only an informational message will be printed to the GUI.
+
+```cpp
+ModuleStatusPtr MyCellToVertVtkm::prepareInputField(const Port *port, const Object::const_ptr &grid,
+                                                    const DataBase::const_ptr &field, std::string &fieldName,
+                                                    vtkm::cont::DataSet &dataset) const
+{
+    if (field->guessMapping(grid) == DataBase::Element) {
+        return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
+    }
+    return Info("No need to apply filter to port " + port->getName());
+}
+```
+
+**Note:** `ModuleStatusPtr` is used to pass module states to `VtkmModule` which handles the states through its `isValid` method. Currently, there are four states: `Success()`, `Info(const std::string &message)`, `Warning(const std::string &message)`, `Error(const std::string &message)`. Returning the latter three, results in `VtkmModule` printing `message` to the GUI's Vistle Console. Returning an `Error` state will stop the execution of the module, but not cause Vistle to crash.
+
+In this example, the output grid is the same as the input grid. As there is no reason to convert the filter's output grid back to Vistle, we can skip this step:
+
+```cpp
+Object::ptr MyCellToVertVtkm::prepareOutputGrid(const vtkm::cont::DataSet &dataset,
+                                                const Object::const_ptr &inputGrid) const
+{
+    return nullptr;
+}
+```
+
+The field we return in the `prepareOutputField` method is the field that will be passed to the output port (as long as it is not a nullptr, in that case `outputGrid` will be added to the port). We can use this to achieve the desired behavior: If the filter was applied, i.e., the input data field was cell-based, we want to add the filter's result to the output port.
+If the filter was not applied, i.e., the input field was vertex-based, we copy simply add the input field to the output port.
+```cpp
+DataBase::ptr MyCellToVertVtkm::prepareOutputField(const vtkm::cont::DataSet &dataset,
+                                                   const Object::const_ptr &inputGrid,
+                                                   const DataBase::const_ptr &inputField, const std::string &fieldName,
+                                                   const Object::ptr &outputGrid) const
+{
+    // if filter was applied ...
+    if (dataset.HasField(fieldName)) {
+        // ... add its output to the output port
+        auto outputField = VtkmModule::prepareOutputField(dataset, inputGrid, inputField, fieldName, outputGrid);
+        outputField->setMapping(DataBase::Vertex);
+        outputField->setGrid(inputGrid);
+        return outputField;
+    } else {
+        // ... otherwise just copy the input field
+        auto ndata = inputField->clone();
+        ndata->setGrid(inputGrid);
+        updateMeta(ndata);
+        return ndata;
+    }
+}
+```
+
+By default, the output field's grid is the output grid. Since we skipped calculating `outputGrid` and a field's grid cannot be `nullptr`, we set the output field's grid to the input grid instead using `setGrid`. `VtkmModule::prepareOutputField` additionally copies the input field's attributes to the output field. As the filter changed the field's mapping, we must set it to vertex-based using `setMapping`.
+
+### The Result
+The code above creates the **MyCellToVertVtkm** module which consists of one input and one output port. It checks if it makes sense to apply the Point Average filter to the input field, i.e., it checks if the input field is cell-based. If so, the filter is applied. If not, an informational message is printed to the Vistle Console:
+![](myCellToVertVtkm_gui.png)
 
 ## Custom VTK-m Filters
 
 For simplicity, predefined VTK-m filters have been used for the two examples above. Please note, that `VtkmModule` can, of course, also be used to add custom VTK-m filters to Vistle. To learn more about implementing custom VTK-m filters, check out [VTK-m's user guide](https://vtk-m.readthedocs.io/en/v2.2.0/basic-filter-impl.html).
-
 
 ## How to Compile Vistle to Run Code on NVIDIA GPUs
