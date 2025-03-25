@@ -9,7 +9,7 @@ Vistle makes use of the portable toolkit [VTK-m](https://m.vtk.org/) which allow
 - [Example 1: Basic Usage](#example-1-basic-usage)
 - [Example 2: Extending the Core Functionality](#example-2-extending-the-core-functionality)
 - [Custom VTK-m Filters](#custom-vtk-m-filters)
-- [How to Compile Vistle to Run Code on NVIDIA GPUs](#how-to-compile-vistle-to-run-code-on-nvidia-gpus)
+- [How to Configure Vistle to Run VTK-m Modules on the GPU](#how-to-configure-vistle-to-run-vtk-m-modules-on-the-gpu)
 
 
 ## The VtkmModule Class
@@ -359,4 +359,18 @@ The code above creates the **MyCellToVertVtkm** module which consists of one inp
 
 For simplicity, predefined VTK-m filters have been used for the two examples above. Please note, that `VtkmModule` can, of course, also be used to add custom VTK-m filters to Vistle. To learn more about implementing custom VTK-m filters, check out [VTK-m's user guide](https://vtk-m.readthedocs.io/en/v2.2.0/basic-filter-impl.html).
 
-## How to Compile Vistle to Run Code on NVIDIA GPUs
+## How to Configure Vistle to Run VTK-m Modules on the GPU
+
+VTK-m is an open-source software that can be obtained through [Gitlab](https://gitlab.kitware.com/vtk/vtk-m). It was added as submodule to the Vistle repository, so that Vistle can handle configuring VTK-m appropriately for the user.
+
+Only the CUDA version of VTK-m is supported by Vistle, although, we are currently working on adding support for the Kokkos version as well. 
+
+To compile Vistle with the CUDA version of VTK-m, run the following commands from your build directory:
+
+```bash
+cmake -DVISTLE_USE_CUDA=ON ..
+make
+```
+
+**Note:** If VTK-m is already installed on your system, which is usually the case if VTK is installed, Vistle will not compile its own VTK-m, but use the system VTK-m instead. In that case, make sure that the system VTK-m was compiled to use CUDA (or Kokkos), otherwise, the modules will be run on the CPU.
+
