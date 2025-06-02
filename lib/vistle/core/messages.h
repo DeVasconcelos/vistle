@@ -1,5 +1,5 @@
-#ifndef MESSAGES_H
-#define MESSAGES_H
+#ifndef VISTLE_CORE_MESSAGES_H
+#define VISTLE_CORE_MESSAGES_H
 
 #include <string>
 #include <array>
@@ -46,6 +46,7 @@ public:
                                         (RENDERCLIENT) //< remote render client
                                         (VRB) //< COVISE/OpenCOVER request broker for collaborative VR
                                         (TUNNEL) //< initiate rendezvous tunnel connection
+                                        (SCRIPT) //< sent from a Python script
     )
     DEFINE_ENUM_WITH_STRING_CONVERSIONS(TunnelRole, (Client)(Server))
 
@@ -293,28 +294,33 @@ private:
 //! request to attach a debugger to a module
 class V_COREEXPORT Debug: public MessageBase<Debug, DEBUG> {
 public:
-    DEFINE_ENUM_WITH_STRING_CONVERSIONS(Request, (AttachDebugger)(PrintState))
+    DEFINE_ENUM_WITH_STRING_CONVERSIONS(Request, (AttachDebugger)(PrintState)(ReplayOutput)(SwitchOutputStreaming))
+    DEFINE_ENUM_WITH_STRING_CONVERSIONS(SwitchAction, (SwitchOn)(SwitchOff)) //< for SwitchOutputStreaming
 
-    explicit Debug(const int module, Request req = AttachDebugger);
+    explicit Debug(const int module, Request req = AttachDebugger, SwitchAction action = SwitchOn);
 
     int getModule() const;
     Request getRequest() const;
+    SwitchAction getSwitchAction() const;
 
 private:
     //! ID of module to debug
     const int m_module;
-    const int m_request; //< action to perform
+    const int m_request = AttachDebugger;
+    int m_switchAction = SwitchOn;
 };
 
 //! notify that a module has quit
 class V_COREEXPORT ModuleExit: public MessageBase<ModuleExit, MODULEEXIT> {
 public:
-    ModuleExit();
+    ModuleExit(bool crashed = false);
     void setForwarded();
     bool isForwarded() const;
+    bool isCrashed() const;
 
 private:
-    bool forwarded;
+    bool forwarded = false;
+    bool crashed = false;
 };
 
 //! instruct GUI to store a snapshot of the rendered workflow
@@ -563,6 +569,7 @@ public:
     SetParameter(int module, const std::string &name, const StringParamVector &value);
     SetParameter(int module, const std::string &name, const std::string &value);
 
+    void setName(const std::string &name);
     void setInit();
     bool isInitialization() const;
     void setDelayed();
@@ -693,11 +700,12 @@ public:
 
     //! Error message in response to a Message
     explicit SendText(const Message &inResponseTo);
-    explicit SendText(TextType type);
+    explicit SendText(TextType type, size_t lineNumber = 0);
 
     TextType textType() const;
     Type referenceType() const;
     uuid_t referenceUuid() const;
+    size_t lineNumber() const;
 
 private:
     //! type of text
@@ -706,13 +714,16 @@ private:
     uuid_t m_referenceUuid;
     //! Type of Message this message is a response to
     Type m_referenceType;
+    //! number of line sent from this stream (for cout/cerr)
+    uint64_t m_lineNumber;
 };
 V_ENUM_OUTPUT_OP(TextType, SendText)
 
 //! provide information on a GUI item, such as a tooltip for an input or output port
 class V_COREEXPORT ItemInfo: public MessageBase<ItemInfo, ITEMINFO> {
 public:
-    DEFINE_ENUM_WITH_STRING_CONVERSIONS(InfoType, (Module)(Port))
+    DEFINE_ENUM_WITH_STRING_CONVERSIONS(
+        InfoType, (Unspecified)(Module)(Port)(PortType)(PortMapped)(PortGeometry)(PortMapping)(PortSpecies))
 
     struct V_COREEXPORT Payload {
         Payload();
@@ -972,6 +983,7 @@ public:
     const char *referrer() const;
     const Meta &meta() const;
     Object::Type objectType() const;
+    int arrayType() const;
     Meta objectMeta() const;
     bool isArray() const;
 
@@ -1082,4 +1094,6 @@ private:
 } // namespace vistle
 
 #pragma pack(pop)
+
+#include "message/setname.h"
 #endif

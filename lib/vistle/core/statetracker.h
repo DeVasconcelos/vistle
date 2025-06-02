@@ -1,5 +1,5 @@
-#ifndef STATETRACKER_H
-#define STATETRACKER_H
+#ifndef VISTLE_CORE_STATETRACKER_H
+#define VISTLE_CORE_STATETRACKER_H
 
 #include <vector>
 #include <map>
@@ -7,6 +7,7 @@
 #include <string>
 
 #include <mutex>
+#include <atomic>
 #include <condition_variable>
 
 #include <vistle/util/buffer.h>
@@ -42,8 +43,10 @@ public:
         Quit = 8,
         Busy = 16,
         Executing = 32,
+        Crashed = 64,
     };
     virtual void moduleStateChanged(int moduleId, int stateBits);
+    virtual void setName(int moduleId, const std::string &name);
 
     virtual void newParameter(int moduleId, const std::string &parameterName);
     virtual void parameterValueChanged(int moduleId, const std::string &parameterName);
@@ -113,6 +116,8 @@ public:
                  std::shared_ptr<PortTracker> portTracker = std::shared_ptr<PortTracker>());
     ~StateTracker();
 
+    void cancel(); // try to cancel any on-going operations
+
     typedef std::recursive_mutex mutex;
     typedef std::unique_lock<mutex> mutex_locker;
     mutex &getMutex();
@@ -129,11 +134,12 @@ public:
     std::vector<int> getSlaveHubs() const;
     const std::string &hubName(int id) const;
     std::vector<int> getRunningList() const;
-    int getNumRunning() const;
+    unsigned getNumRunning() const;
     std::vector<int> getBusyList() const;
     int getHub(int id) const;
     const HubData &getHubData(int id) const;
     std::string getModuleName(int id) const;
+    std::string getModuleDisplayName(int id) const;
     std::string getModuleDescription(int id) const;
     bool isCompound(int id);
 
@@ -144,7 +150,8 @@ public:
     std::vector<std::string> getParameters(int id) const;
     std::shared_ptr<Parameter> getParameter(int id, const std::string &name) const;
 
-    ParameterSet getConnectedParameters(const Parameter &param) const;
+    ParameterSet getConnectedParameters(const Parameter &param, bool onlyDirect = false) const;
+    ParameterSet getDirectlyConnectedParameters(const Parameter &param) const;
 
     bool handle(const message::Message &msg, const buffer *payload, bool track = true);
     bool handle(const message::Message &msg, const char *payload, size_t payloadSize, bool track = true);
@@ -166,8 +173,15 @@ public:
         std::shared_ptr<const buffer> payload;
     };
     typedef std::vector<MessageWithPayload> VistleState;
+    struct VistleLockedState {
+        VistleLockedState(mutex &mutex): guard(mutex) {}
+
+        std::unique_lock<mutex> guard;
+        VistleState messages;
+    };
 
     VistleState getState() const;
+    VistleLockedState getLockedState() const;
 
     const std::map<AvailableModule::Key, AvailableModule> &availableModules() const;
 
@@ -200,6 +214,8 @@ public:
 
     std::string barrierInfo(const message::uuid_t &uuid) const;
 
+    void setVerbose(bool verbose);
+
 protected:
     std::shared_ptr<message::Buffer> removeRequest(const message::uuid_t &uuid);
     bool registerReply(const message::uuid_t &uuid, const message::Message &msg);
@@ -216,10 +232,13 @@ protected:
         bool killed = false;
         bool busy = false;
         bool executing = false;
+        bool crashed = false;
+        bool outputStreaming = false;
         std::string name;
         ParameterMap parameters;
         ParameterOrder paramOrder;
         int height = 0; //< length of shortest path to a sink
+        std::string displayName;
         std::string statusText;
         message::UpdateStatus::Importance statusImportance = message::UpdateStatus::Bulk;
         unsigned long statusTime = 0;
@@ -279,6 +298,7 @@ private:
     bool handlePriv(const message::Trace &trace);
     bool handlePriv(const message::Debug &debug);
     bool handlePriv(const message::Spawn &spawn);
+    bool handlePriv(const message::SetName &SetName);
     bool handlePriv(const message::LoadWorkflow &load);
     bool handlePriv(const message::SaveWorkflow &save);
     bool handlePriv(const message::Started &started);
@@ -337,6 +357,7 @@ private:
     message::UpdateStatus::Importance m_currentStatusImportance = message::UpdateStatus::Bulk;
 
     size_t m_numMessages = 0;
+    std::vector<size_t> m_numMessagesByType;
     size_t m_numObjects = 0;
     size_t m_aggregatedPayload = 0;
 
@@ -348,6 +369,11 @@ private:
 
     std::map<message::uuid_t, std::string> m_barriers;
     bool m_quitting = false;
+    std::atomic<bool> m_cancelling{false};
+
+    bool m_verbose = false;
+
+    void setModified(const std::string &reason = {});
 };
 
 } // namespace vistle

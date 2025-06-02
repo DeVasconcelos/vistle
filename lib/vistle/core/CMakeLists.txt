@@ -2,6 +2,7 @@ vistle_find_package(LZ4)
 #vistle_find_package(ZSTD)
 
 set(core_SOURCES
+    message/setname.cpp
     allobjects.cpp # just one file including all the others for faster compilation
     availablemodule.cpp
     archive_loader.cpp
@@ -9,9 +10,9 @@ set(core_SOURCES
     archives.cpp
     archives_compress.cpp
     archives_compress_sz3.cpp
+    archives_compress_bigwhoop.cpp
     cellalgorithm.cpp
     filequery.cpp
-    findobjectreferenceoarchive.cpp
     geometry.cpp
     message.cpp
     messagepayload.cpp
@@ -39,6 +40,7 @@ set(core_SOURCES
 set(core_SOURCES
     ${core_SOURCES}
     celltree.cpp
+    celltreenode.cpp
     coords.cpp
     database.cpp
     empty.cpp
@@ -52,20 +54,24 @@ set(core_SOURCES
     points.cpp
     polygons.cpp
     rectilineargrid.cpp
+    scalars.cpp
     structuredgrid.cpp
     structuredgridbase.cpp
     texture1d.cpp
     uniformgrid.cpp
     unstr.cpp
+    uuid.cpp
     vec.cpp
     vertexownerlist.cpp)
 
 set(core_HEADERS
+    message/setname.h
     archive_loader.h
     archive_saver.h
     archives.h
     archives_compress.h
     archives_compress_sz3.h
+    archives_compress_bigwhoop.h
     archives_config.h
     archives_impl.h
     availablemodule.h
@@ -84,7 +90,6 @@ set(core_HEADERS
     empty_impl.h
     export.h
     filequery.h
-    findobjectreferenceoarchive.h
     geometry.h
     grid.h
     index.h
@@ -152,6 +157,7 @@ set(core_HEADERS
     uniformgrid.h
     uniformgrid_impl.h
     unstr.h
+    unstr_geo.h
     unstr_impl.h
     uuid.h
     vec.h
@@ -191,7 +197,7 @@ vistle_target_link_libraries(
     PUBLIC
     Boost::system
     PUBLIC
-    vtkm::cont)
+    viskores::cont)
 target_link_libraries(vistle_core PRIVATE vistle_config)
 target_link_libraries(vistle_core PUBLIC Eigen3::Eigen)
 
@@ -205,6 +211,12 @@ if(SZ3_FOUND)
     target_compile_definitions(vistle_core PRIVATE HAVE_SZ3)
     target_include_directories(vistle_core SYSTEM PRIVATE ${SZ3_INCLUDE_DIRS})
     vistle_target_link_libraries(vistle_core PRIVATE ${SZ3_LIBRARIES})
+endif()
+
+if(BIGWHOOP_FOUND)
+    target_compile_definitions(vistle_core PRIVATE HAVE_BIGWHOOP)
+    target_include_directories(vistle_core SYSTEM PRIVATE ${BIGWHOOP_INCLUDE_DIRS})
+    vistle_target_link_libraries(vistle_core PRIVATE bwclib)
 endif()
 
 if(ZSTD_FOUND)

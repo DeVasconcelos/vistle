@@ -1,5 +1,5 @@
-#ifndef VISTLE_GEOMETRY_H
-#define VISTLE_GEOMETRY_H
+#ifndef VISTLE_CORE_GEOMETRY_H
+#define VISTLE_CORE_GEOMETRY_H
 
 #include "export.h"
 #include "object.h"
@@ -25,7 +25,9 @@ public:
     virtual Index getNumElements() = 0;
     virtual Index getNumElements() const = 0;
     virtual Index cellNumFaces(Index elem) const = 0;
+    virtual Index cellNumVertices(Index elem) const = 0;
     virtual std::vector<Index> cellVertices(Index elem) const = 0;
+    virtual Vector3 cellCenter(Index elem) const = 0; //< a point inside the convex hull of the cell
 };
 
 } // namespace vistle

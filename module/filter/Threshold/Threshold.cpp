@@ -5,11 +5,14 @@
 #include <vistle/core/vec.h>
 #include <vistle/core/unstr.h>
 #include <vistle/core/polygons.h>
+#include <vistle/core/quads.h>
 #include <vistle/core/lines.h>
 #include <vistle/util/coRestraint.h>
 #include <vistle/util/enum.h>
 #include <vistle/alg/objalg.h>
+#include <vistle/alg/fields.h>
 #include <vistle/core/geometry.h>
+#include <vistle/core/structuredgridbase.h>
 
 #include "Threshold.h"
 
@@ -66,6 +69,7 @@ public:
             return false;
 
         std::vector<Float> vals;
+        vals.reserve(8);
         switch (m_mapping) {
         case DataBase::Vertex:
             for (auto v: m_elif->cellVertices(element)) {
@@ -147,18 +151,24 @@ private:
 
 Threshold::Threshold(const std::string &name, int moduleID, mpi::communicator comm): Module(name, moduleID, comm)
 {
+#ifdef CELLSELECT
+    p_in[0] = createInputPort("data_in", "input data");
+    p_out[0] = createOutputPort("data_out", "output data");
+#else
     p_in[0] = createInputPort("threshold_in", "scalar data deciding over elements rejection");
     p_out[0] = createOutputPort("threshold_out", "threshold input filtered to remaining elements");
+#endif
     for (unsigned i = 1; i < NUMPORTS; ++i) {
         p_in[i] = createInputPort("data_in" + std::to_string(i), "additional input data");
         p_out[i] = createOutputPort("data_out" + std::to_string(i), "additional output data");
     }
 
-    p_reuse = addIntParameter("reuse_coordinates", "do not renumber vertices and reuse coordinate and data arrays",
-                              false, Parameter::Boolean);
+    p_reuse = addIntParameter("reuse_coordinates",
+                              "do not renumber vertices and reuse coordinate and data arrays (if possible)", false,
+                              Parameter::Boolean);
     p_invert = addIntParameter("invert_selection", "invert cell selection", false, Parameter::Boolean);
 #ifdef CELLSELECT
-    p_restraint = addStringParameter("selection", "values to select", "");
+    p_restraint = addStringParameter("selection", "values to select", "", Parameter::Restraint);
 #else
     p_operation = addIntParameter("operation", "selection operation", AnyLess, Parameter::Choice);
     V_ENUM_SET_CHOICES(p_operation, Operation);
@@ -192,52 +202,6 @@ bool Threshold::prepare()
     return true;
 }
 
-template<class T, int Dim>
-typename Vec<T, Dim>::ptr remapData(typename Vec<T, Dim>::const_ptr in, const Threshold::ElementsMapping &em,
-                                    const Threshold::VerticesMapping &vm)
-{
-    if (in->guessMapping() == DataBase::Vertex) {
-        typename Vec<T, Dim>::ptr out(new Vec<T, Dim>(vm.size()));
-
-        const T *data_in[Dim];
-        T *data_out[Dim];
-        for (int d = 0; d < Dim; ++d) {
-            data_in[d] = &in->x(d)[0];
-            data_out[d] = out->x(d).data();
-        }
-
-        for (const auto &v: vm) {
-            Index f = v.first;
-            Index s = v.second;
-            for (int d = 0; d < Dim; ++d) {
-                data_out[d][s] = data_in[d][f];
-            }
-        }
-        return out;
-    } else if (in->guessMapping() == DataBase::Element) {
-        typename Vec<T, Dim>::ptr out(new Vec<T, Dim>(em.size()));
-
-        const T *data_in[Dim];
-        T *data_out[Dim];
-        for (int d = 0; d < Dim; ++d) {
-            data_in[d] = &in->x(d)[0];
-            data_out[d] = out->x(d).data();
-        }
-
-        Index s = 0;
-        for (const auto &e: em) {
-            Index f = e;
-            for (int d = 0; d < Dim; ++d) {
-                data_out[d][s] = data_in[d][f];
-            }
-            ++s;
-        }
-        return out;
-    }
-
-    return nullptr;
-}
-
 bool Threshold::compute(const std::shared_ptr<BlockTask> &task) const
 {
     auto obj = task->expect<Object>(p_in[0]);
@@ -247,12 +211,16 @@ bool Threshold::compute(const std::shared_ptr<BlockTask> &task) const
     auto ugrid = UnstructuredGrid::as(grid);
     auto poly = Polygons::as(grid);
     auto line = Lines::as(grid);
+    auto coords = Coords::as(grid);
+    auto sgrid = StructuredGridBase::as(grid);
+    auto grid_in = grid->getInterface<ElementInterface>();
 
-    if (!ugrid && !poly && !line) {
+    if (!ugrid && !poly && !line && !sgrid) {
         sendError("no valid grid received on threshold_in");
         return true;
     }
-    Indexed::const_ptr grid_in = ugrid ? Indexed::as(ugrid) : poly ? Indexed::as(poly) : Indexed::as(line);
+    Indexed::const_ptr indexed = ugrid ? Indexed::as(ugrid) : poly ? Indexed::as(poly) : Indexed::as(line);
+    assert(indexed || sgrid);
     assert(grid_in);
 
     Object::const_ptr data = mapped;
@@ -284,64 +252,113 @@ bool Threshold::compute(const std::shared_ptr<BlockTask> &task) const
         CellSelector select((Operation)p_operation->getValue(), p_threshold->getValue(), mapped);
 #endif
 
-        auto outgrid = grid_in->cloneType();
-
+        Object::ptr outgeo;
+        Indexed::ptr outgrid;
+        Quads::ptr outquads;
         VerticesMapping &vm = cachedResult.vm;
         ElementsMapping &em = cachedResult.em;
-        const Index *icl = &grid_in->cl()[0];
-        const Index *iel = &grid_in->el()[0];
+        const Index *icl = nullptr;
+        const Index *iel = nullptr;
         const Byte *itl = nullptr;
-        if (ugrid) {
-            itl = &ugrid->tl()[0];
+        if (indexed) {
+            outgrid = indexed->cloneType();
+            outgeo = outgrid;
+
+            icl = &indexed->cl()[0];
+            iel = &indexed->el()[0];
+            if (ugrid) {
+                itl = &ugrid->tl()[0];
+            }
+        } else if (sgrid) {
+            Index dims[]{sgrid->getNumDivisions(0), sgrid->getNumDivisions(1), sgrid->getNumDivisions(2)};
+            int dim = sgrid->dimensionality(dims);
+            if (dim == 3) {
+                outgrid = std::make_shared<UnstructuredGrid>(0, 0, 0);
+                outgeo = outgrid;
+            } else {
+                outquads = std::make_shared<Quads>(0, 0);
+                outgeo = outquads;
+            }
         }
 
         Index nelem = grid_in->getNumElements();
         Index ncorn = 0;
         for (Index e = 0; e < nelem; ++e) {
-            const Index begin = iel[e], end = iel[e + 1];
             if (m_invert ^ select(e)) {
                 em.push_back(e);
-                ncorn += end - begin;
+                if (iel) {
+                    const Index begin = iel[e], end = iel[e + 1];
+                    ncorn += end - begin;
+                } else if (outquads) {
+                    ncorn += 4;
+                } else {
+                    ncorn += grid_in->cellNumVertices(e);
+                }
             }
         }
 
-        outgrid->el().resize(em.size() + 1);
-        outgrid->cl().resize(ncorn);
-        auto *el = &outgrid->el()[0];
-        auto *cl = &outgrid->cl()[0];
-        Byte *tl = nullptr;
-        if (ugrid && !em.empty()) {
-            auto otl = &std::dynamic_pointer_cast<UnstructuredGrid>(outgrid)->tl();
-            otl->resize(em.size());
-            tl = &otl->at(0);
-        }
-
-        Index cidx = 0;
-        for (const auto &e: em) {
-            *el = cidx;
-            ++el;
-
-            const Index begin = iel[e], end = iel[e + 1];
-            for (Index i = begin; i < end; ++i) {
-                cl[cidx] = icl[i];
-                ++cidx;
+        if (outgrid) {
+            outgrid->el().resize(em.size() + 1);
+            outgrid->cl().resize(ncorn);
+            auto *el = &outgrid->el()[0];
+            auto *cl = &outgrid->cl()[0];
+            Byte *tl = nullptr;
+            auto outugrid = UnstructuredGrid::as(outgrid);
+            if (outugrid && !em.empty()) {
+                auto otl = &outugrid->tl();
+                otl->resize(em.size());
+                tl = &otl->at(0);
             }
-            if (tl) {
-                *tl = itl[e];
-                ++tl;
+
+            Index cidx = 0;
+            for (const auto &e: em) {
+                *el = cidx;
+                ++el;
+
+                const Index begin = iel[e], end = iel[e + 1];
+                for (Index i = begin; i < end; ++i) {
+                    cl[cidx] = icl[i];
+                    ++cidx;
+                }
+                if (tl) {
+                    if (itl)
+                        *tl = itl[e];
+                    else
+                        *tl = UnstructuredGrid::HEXAHEDRON;
+                    ++tl;
+                }
+
+                *el = cidx;
+            }
+
+        } else if (outquads) {
+            outquads->cl().resize(em.size() * 4);
+            auto *cl = &outquads->cl()[0];
+
+            Index cidx = 0;
+            for (const auto &e: em) {
+                const auto vert = grid_in->cellVertices(e);
+                for (int i = 0; i < 4; ++i) {
+                    cl[cidx] = vert[i];
+                    ++cidx;
+                }
             }
         }
-        *el = cidx;
+        if (outquads) {
+            renumberVertices<Quads>(sgrid, outquads, vm);
+        } else if (coords) {
+            assert(outgrid);
+            renumberVertices(coords, outgrid, vm);
+        } else {
+            assert(outgrid);
+            renumberVertices<Indexed>(sgrid, outgrid, vm);
+        }
+        updateMeta(outgeo);
 
-        renumberVertices(grid_in, outgrid, vm);
-        outgrid->setMeta(grid_in->meta());
-        updateMeta(outgrid);
-        outgrid->copyAttributes(grid_in);
-
-        cachedResult.grid = outgrid;
+        cachedResult.grid = outgeo;
         m_gridCache.storeAndUnlock(cacheEntry, cachedResult);
     }
-    auto &outgrid = cachedResult.grid;
+    auto &outgeo = cachedResult.grid;
     auto &em = cachedResult.em;
     auto &vm = cachedResult.vm;
 
@@ -353,38 +370,28 @@ bool Threshold::compute(const std::shared_ptr<BlockTask> &task) const
             return true;
         }
         auto din = i > 0 ? splitContainerObject(task->expect<Object>(p_in[i])) : split;
-        if (din.geometry->getHandle() != grid_in->getHandle()) {
+        if (din.geometry->getHandle() != grid->getHandle()) {
             sendError("grids do not match");
             return true;
         }
         auto &data = din.mapped;
         if (!data) {
-            task->addObject(p_out[i], outgrid);
+            task->addObject(p_out[i], outgeo);
         } else if (vm.empty()) {
             DataBase::ptr dout = data->clone();
-            dout->setGrid(outgrid);
+            dout->setGrid(outgeo);
             updateMeta(dout);
             task->addObject(p_out[i], dout);
         } else {
             DataBase::ptr data_obj_out;
-            if (auto data_in = Vec<Scalar, 3>::as(data)) {
-                data_obj_out = remapData<Scalar, 3>(data_in, em, vm);
-            } else if (auto data_in = Vec<Scalar, 1>::as(data)) {
-                data_obj_out = remapData<Scalar, 1>(data_in, em, vm);
-            } else if (auto data_in = Vec<Index, 3>::as(data)) {
-                data_obj_out = remapData<Index, 3>(data_in, em, vm);
-            } else if (auto data_in = Vec<Index, 1>::as(data)) {
-                data_obj_out = remapData<Index, 1>(data_in, em, vm);
-            } else if (auto data_in = Vec<Byte, 3>::as(data)) {
-                data_obj_out = remapData<Byte, 3>(data_in, em, vm);
-            } else if (auto data_in = Vec<Byte, 1>::as(data)) {
-                data_obj_out = remapData<Byte, 1>(data_in, em, vm);
+            if (data->guessMapping(grid) == DataBase::Vertex) {
+                data_obj_out = remapData(data, vm);
             } else {
-                std::cerr << "WARNING: No valid 1D or 3D data on input port" << std::endl;
+                data_obj_out = remapData(data, em, true);
             }
 
             if (data_obj_out) {
-                data_obj_out->setGrid(outgrid);
+                data_obj_out->setGrid(outgeo);
                 data_obj_out->setMeta(data->meta());
                 data_obj_out->copyAttributes(data);
                 updateMeta(data_obj_out);
@@ -416,15 +423,16 @@ void Threshold::renumberVertices(Coords::const_ptr coords, Indexed::ptr poly, Ve
             }
         }
 
-        const Scalar *xcoord = &coords->x()[0];
-        const Scalar *ycoord = &coords->y()[0];
-        const Scalar *zcoord = &coords->z()[0];
         auto &px = poly->x();
         auto &py = poly->y();
         auto &pz = poly->z();
         px.resize(c);
         py.resize(c);
         pz.resize(c);
+
+        const Scalar *xcoord = &coords->x()[0];
+        const Scalar *ycoord = &coords->y()[0];
+        const Scalar *zcoord = &coords->z()[0];
 
         for (const auto &v: vm) {
             Index f = v.first;
@@ -433,6 +441,37 @@ void Threshold::renumberVertices(Coords::const_ptr coords, Indexed::ptr poly, Ve
             py[s] = ycoord[f];
             pz[s] = zcoord[f];
         }
+    }
+}
+
+template<class Geometry>
+void Threshold::renumberVertices(StructuredGridBase::const_ptr sgrid, typename Geometry::ptr geo,
+                                 VerticesMapping &vm) const
+{
+    Index c = 0;
+    for (Index &v: geo->cl()) {
+        if (vm.emplace(v, c).second) {
+            v = c;
+            ++c;
+        } else {
+            v = vm[v];
+        }
+    }
+
+    auto &px = geo->x();
+    auto &py = geo->y();
+    auto &pz = geo->z();
+    px.resize(c);
+    py.resize(c);
+    pz.resize(c);
+
+    for (const auto &v: vm) {
+        Index f = v.first;
+        Index s = v.second;
+        auto p = sgrid->getVertex(f);
+        px[s] = p[0];
+        py[s] = p[1];
+        pz[s] = p[2];
     }
 }
 

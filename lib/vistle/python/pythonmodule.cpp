@@ -10,7 +10,7 @@
 #include <vistle/util/pybind.h>
 
 #include <boost/lexical_cast.hpp>
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 
 #include <vistle/core/uuid.h>
@@ -66,6 +66,7 @@ namespace vistle {
 
 static PythonModule *pythonModuleInstance = nullptr;
 static message::Type traceMessages = message::INVALID;
+static int traceId = message::Id::Invalid;
 
 static vistle::PythonStateAccessor &access()
 {
@@ -80,7 +81,9 @@ static vistle::StateTracker &state()
 static bool sendMessage(const vistle::message::Message &m, const vistle::buffer *payload = nullptr)
 {
     if (traceMessages == m.type() || traceMessages == message::ANY) {
-        std::cerr << "Python: send " << m << std::endl;
+        if (traceId == message::Id::Broadcast || traceId == message::Id::UI || traceId == m.destId()) {
+            std::cerr << "Python: send " << m << std::endl;
+        }
     }
     if (!pythonModuleInstance) {
         std::cerr << "cannot send message: no Vistle module instance" << std::endl;
@@ -105,9 +108,9 @@ static bool sendCoverMessage(int destMod, int subType, size_t len, const char *d
     return sendMessage(cover, &pl);
 }
 
-static bool snapshotGui(const std::string &filename)
+static bool snapshotGui(const std::string &filename, bool quit = false)
 {
-    auto msg = message::Screenshot(filename);
+    auto msg = message::Screenshot(filename, quit);
     msg.setDestId(message::Id::Broadcast);
     return sendMessage(msg);
 }
@@ -198,6 +201,7 @@ static void trace(int id = message::Id::Broadcast, message::Type type = message:
         else
             traceMessages = message::INVALID;
     }
+    traceId = id;
 
     message::Trace m(id, type, onoff);
     sendMessage(m);
@@ -346,6 +350,29 @@ static void kill(int id)
         m.setDestId(id);
         sendMessage(m);
     }
+}
+
+static void setModuleDisplayName(int id, const std::string &name)
+{
+#ifdef DEBUG
+    std::cerr << "Python: setModuleDisplayName of " << id << " to " << name << std::endl;
+#endif
+    if (message::Id::isModule(id)) {
+        message::SetName m(id, name);
+        m.setDestId(message::Id::Broadcast); // to master for serialization with Spawn
+        sendMessage(m);
+    }
+}
+
+static std::string getModuleDisplayName(int id)
+{
+#ifdef DEBUG
+    std::cerr << "Python: getModuleDisplayName of " << id << std::endl;
+#endif
+    if (message::Id::isModule(id)) {
+        return state().getModuleDisplayName(id);
+    }
+    return "";
 }
 
 static std::string hubName(int id)
@@ -818,11 +845,14 @@ static void requestTunnel(unsigned short listenPort, const std::string &destHost
 
     message::RequestTunnel m(listenPort, destHost, destPort);
 
-    asio::io_service io_service;
-    asio::ip::tcp::resolver resolver(io_service);
-    try {
-        auto endpoints = resolver.resolve({destHost, std::to_string(destPort)});
-        auto addr = (*endpoints).endpoint().address();
+    asio::io_context io_context;
+    asio::ip::tcp::resolver resolver(io_context);
+    boost::system::error_code ec;
+    auto endpoints = resolver.resolve(destHost, std::to_string(destPort), ec);
+    if (ec) {
+    } else if (endpoints.empty()) {
+    } else {
+        auto addr = endpoints.begin()->endpoint().address();
         if (addr.is_v6()) {
             m.setDestAddr(addr.to_v6());
             std::cerr << destHost << " resolved to " << addr.to_v6() << std::endl;
@@ -830,7 +860,6 @@ static void requestTunnel(unsigned short listenPort, const std::string &destHost
             m.setDestAddr(addr.to_v4());
             std::cerr << destHost << " resolved to " << addr.to_v4() << std::endl;
         }
-    } catch (...) {
     }
 
     sendMessage(m);
@@ -1001,7 +1030,8 @@ static void setCompoundDropPosition(Float x, Float y)
 
 static void setRelativePos(int id, Float x, Float y)
 {
-    setVectorParam2(id, "_position", x + compoundDropPositionX, y + compoundDropPositionY, true);
+    setVectorParam2(message::Id::Vistle, std::string("position[" + std::to_string(id) + "]").c_str(),
+                    x + compoundDropPositionX, y + compoundDropPositionY, true);
 }
 
 void moduleCompoundToFile(const ModuleCompound &comp)
@@ -1497,6 +1527,8 @@ PY_MODULE(_vistle, m)
           "id"_a, "hub"_a, "modulename"_a = "");
     m.def("waitForSpawn", waitForSpawn, "wait for asynchronously spawned module with uuid `arg1` and return its ID");
     m.def("kill", kill, "kill module with ID `arg1`");
+    m.def("setModuleDisplayName", setModuleDisplayName, "id"_a, "name"_a, "set name of module with ID `id` to `name`");
+    m.def("getModuleDisplayName", getModuleDisplayName, "id"_a, "get name of module with ID `id`");
     m.def("connect", connect,
           "connect output `arg2` of module with ID `arg1` to input `arg4` of module with ID `arg3`");
     m.def("disconnect", disconnect,
@@ -1504,7 +1536,7 @@ PY_MODULE(_vistle, m)
     m.def("compute", compute, "trigger execution of module with `id`", "moduleId"_a = message::Id::Broadcast);
     m.def("interrupt", cancelCompute, "interrupt execution of module with ID `arg1`");
     m.def("sendCoverMessage", &sendCoverGuiMessage, "send a coGRMsg to COVER", "msg"_a, "coverModuleId"_a);
-    m.def("snapshotGui", &snapshotGui, "save a snapshot of the mapeditor workflow", "filename"_a);
+    m.def("snapshotGui", &snapshotGui, "save a snapshot of the mapeditor workflow", "filename"_a, "quit"_a = false);
     m.def("quit", quit, "quit vistle session");
     m.def("trace", trace, "enable/disable message tracing for module `id`", "id"_a = message::Id::Broadcast,
           "type"_a = message::ANY, "enable"_a = true);
@@ -1594,17 +1626,10 @@ PythonModule::PythonModule(PythonStateAccessor &stateAccessor): m_access(&stateA
 {
     assert(pythonModuleInstance == nullptr);
     pythonModuleInstance = this;
+#ifdef DEBUG
     std::cerr << "creating Vistle python module" << std::endl;
-}
-
-#if 0
-PythonModule::PythonModule(VistleConnection *vc): m_access(new UiPythonStateAccessor(vc)), m_vistleConnection(vc)
-{
-    assert(pythonModuleInstance == nullptr);
-    pythonModuleInstance = this;
-    std::cerr << "creating Vistle python module" << std::endl;
-}
 #endif
+}
 
 PythonModule::~PythonModule()
 {
@@ -1624,7 +1649,9 @@ bool PythonModule::import(py::object *ns, const std::string &path)
         py::dict locals;
         locals["modulename"] = "vistle";
         locals["path"] = path + "/vistle.py";
+#ifdef DEBUG
         std::cerr << "Python: loading " << path + "/vistle.py" << std::endl;
+#endif
 #if PY_MAJOR_VERSION > 3 || (PY_MAJOR_VERSION == 3 && PY_MINOR_VERSION >= 6)
         py::eval<py::eval_statements>(R"(
          import sys
@@ -1660,7 +1687,9 @@ bool PythonModule::import(py::object *ns, const std::string &path)
         return false;
     }
 
+#ifdef DEBUG
     std::cerr << "done loading of vistle.py" << std::endl;
+#endif
 #endif
 
     return true;

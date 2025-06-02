@@ -17,6 +17,7 @@
 #include "vistleconsole.h"
 #include "dataflowview.h"
 #include "mainwindow.h"
+#include "module.h"
 
 #include <vistle/core/statetracker.h>
 #include <vistle/util/directory.h>
@@ -78,6 +79,11 @@ ModuleBrowser *DataFlowNetwork::moduleBrowser() const
     return m_mainWindow->moduleBrowser();
 }
 
+const QList<Module *> &DataFlowNetwork::modules() const
+{
+    return m_moduleList;
+}
+
 float abs(const QPointF p)
 {
     return qSqrt(p.x() * p.x() + p.y() * p.y());
@@ -124,6 +130,9 @@ Module *DataFlowNetwork::newModule(QString modName)
     connect(module, &Module::createModuleCompound, this, &DataFlowNetwork::createModuleCompound);
     connect(module, &Module::selectConnected, this, &DataFlowNetwork::selectConnected);
     connect(module, &Module::visibleChanged, this, &DataFlowNetwork::updateConnectionVisibility);
+    connect(module, &Module::outputStreamingChanged,
+            [this, module](bool enable) { emit toggleOutputStreaming(module->id(), enable); });
+    connect(this, &DataFlowNetwork::highlightModule, module, &Module::highlightModule);
     return module;
 }
 
@@ -157,9 +166,11 @@ void DataFlowNetwork::addModule(int moduleId, const boost::uuids::uuid &spawnUui
         return;
 
     //std::cerr << "addModule: name=" << name.toStdString() << ", id=" << moduleId << std::endl;
+    bool move = true;
     Module *mod = findModule(spawnUuid);
     if (mod) {
         mod->sendPosition();
+        move = false;
     } else {
         mod = findModule(moduleId);
     }
@@ -170,6 +181,11 @@ void DataFlowNetwork::addModule(int moduleId, const boost::uuids::uuid &spawnUui
     mod->setId(moduleId);
     mod->setHub(m_state.getHub(moduleId));
     mod->setName(name);
+    if (move) {
+        auto pos = getModulePosition(moduleId);
+        moveModule(moduleId, pos.x(), pos.y());
+    }
+    mod->setDisplayName(QString::fromStdString(m_state.getModuleDisplayName(moduleId)));
 }
 
 void DataFlowNetwork::deleteModule(int moduleId)
@@ -196,7 +212,9 @@ void DataFlowNetwork::deleteModule(int moduleId)
 void DataFlowNetwork::moduleStateChanged(int moduleId, int stateBits)
 {
     if (Module *m = findModule(moduleId)) {
-        if (stateBits & vistle::StateObserver::Killed)
+        if (stateBits & vistle::StateObserver::Crashed)
+            m->setStatus(Module::CRASHED);
+        else if (stateBits & vistle::StateObserver::Killed)
             m->setStatus(Module::KILLED);
         else if (stateBits & vistle::StateObserver::Busy)
             m->setStatus(Module::BUSY);
@@ -207,6 +225,28 @@ void DataFlowNetwork::moduleStateChanged(int moduleId, int stateBits)
         else
             m->setStatus(Module::SPAWNING);
     }
+}
+
+QPointF DataFlowNetwork::getModulePosition(int id)
+{
+    QPointF pos;
+    auto p = DataFlowNetwork::getParameter<vistle::ParamVector>(vistle::message::Id::Vistle,
+                                                                QString("position[%1]").arg(id));
+    if (!p)
+        return pos;
+    vistle::ParamVector v = p->getValue();
+    pos.setX(v[0]);
+    pos.setY(v[1]);
+    return pos;
+}
+
+int DataFlowNetwork::getModuleLayer(int id)
+{
+    auto p =
+        DataFlowNetwork::getParameter<vistle::ParamVector>(vistle::message::Id::Vistle, QString("layer[%1]").arg(id));
+    if (!p)
+        return 0;
+    return p->getValue();
 }
 
 void DataFlowNetwork::newPort(int moduleId, QString portName)
@@ -319,14 +359,21 @@ void DataFlowNetwork::itemInfoChanged(QString text, int type, int id, QString po
 {
     if (Module *m = findModule(id)) {
         if (port.isEmpty()) {
-            m->setInfo(text);
+            m->setInfo(text, type);
         } else {
             std::lock_guard guard(m_state);
             const vistle::Port *p = m_state.portTracker()->findPort(id, port.toStdString());
             if (auto *gp = m->getGuiPort(p)) {
-                gp->setInfo(text);
+                gp->setInfo(text, type);
             }
         }
+    }
+}
+
+void DataFlowNetwork::setDisplayName(int id, QString text)
+{
+    if (Module *m = findModule(id)) {
+        m->setDisplayName(text);
     }
 }
 
@@ -348,6 +395,13 @@ void DataFlowNetwork::messagesVisibilityChanged(int moduleId, bool visible)
 {
     if (Module *m = findModule(moduleId)) {
         m->setMessagesVisibility(visible);
+    }
+}
+
+void DataFlowNetwork::outputStreamingChanged(int moduleId, bool enable)
+{
+    if (Module *m = findModule(moduleId)) {
+        m->setOutputStreaming(enable);
     }
 }
 
@@ -493,6 +547,30 @@ Module *DataFlowNetwork::findModule(const boost::uuids::uuid &spawnUuid) const
 
     return nullptr;
 }
+
+Module *DataFlowNetwork::findModule(const QPointF &pos) const
+{
+    std::cerr << "findModule: " << pos.x() << ", " << pos.y() << std::endl;
+    for (Module *m: m_moduleList) {
+        if (m->contains(m->mapFromScene(pos))) {
+            return m;
+        }
+    }
+
+    return nullptr;
+}
+
+QList<QString> DataFlowNetwork::getModuleParameters(int id) const
+{
+    QList<QString> qparams;
+    std::lock_guard guard(m_state);
+    auto params = m_state.getParameters(id);
+    for (const auto &p: params) {
+        qparams.append(QString::fromStdString(p));
+    }
+    return qparams;
+}
+
 
 bool DataFlowNetwork::isDark() const
 {

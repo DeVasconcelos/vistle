@@ -40,6 +40,28 @@ std::string bin(const std::string &prefix)
     return prefix + "/bin/" + build_type();
 }
 
+std::string covisedir(const std::string &prefix)
+{
+    if (auto cd = getenv("COVISEDIR")) {
+        return cd;
+    }
+
+    namespace bf = vistle::filesystem;
+
+    auto dir = bf::path(prefix);
+    for (;;) {
+        auto covisedir = dir / "covise";
+        if (bf::exists(covisedir)) {
+            return covisedir.string();
+        }
+        if (!dir.has_parent_path()) {
+            break;
+        }
+        dir = dir.parent_path();
+    }
+    return "";
+}
+
 } // namespace
 
 std::string share(const std::string &prefix)
@@ -81,6 +103,20 @@ static bool setvar(const std::string &var, const std::string &val)
     return setvar(vv);
 }
 
+static bool addpath(const char *var, const std::string &add)
+{
+    auto p = getenv(var);
+    if (!p) {
+        return setvar(var, add);
+    }
+
+#ifdef _WIN32
+    return setvar(var, add + ";" + p);
+#else
+    return setvar(var, add + ":" + p);
+#endif
+}
+
 bool setVistleRoot(const std::string &vistleRootDir, const std::string &buildtype)
 {
     return setvar("VISTLE_ROOT", vistleRootDir) && setvar("VISTLE_BUILDTYPE", buildtype);
@@ -96,12 +132,10 @@ bool setEnvironment(const std::string &prefix)
     auto pathadd = bin(prefix);
 #endif
     setvar(libpath, prefix + "/lib");
+    addpath("PATH", pathadd);
 
-    if (auto p = getenv("PATH")) {
-        setvar("PATH", pathadd + ":" + p);
-    } else {
-        setvar("PATH", pathadd);
-    }
+    setvar("COVISEDIR", covisedir(prefix)); // for finding COVER and example data
+    addpath("COVISE_PATH", prefix); // for finding Vistle COVER plugin
 
     auto envfile = std::ifstream(prefix + "/vistle-env.txt");
     while (envfile.good()) {
@@ -174,6 +208,11 @@ std::string Directory::moduleplugin() const
 std::string Directory::share() const
 {
     return m_prefix + "share/vistle/";
+}
+
+std::string Directory::covisedir() const
+{
+    return directory::covisedir(prefix());
 }
 
 } // namespace vistle

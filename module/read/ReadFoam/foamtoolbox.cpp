@@ -143,12 +143,6 @@ static std::string get_stem(const Path &path)
     return stem + ext;
 }
 
-static std::string get_stem(const fs::Entry &entry)
-{
-    fs::Path path(entry);
-    return get_stem(path);
-}
-
 template<class Path>
 static std::string get_extension(const Path &path)
 {
@@ -159,12 +153,6 @@ static std::string get_extension(const Path &path)
         return ext;
 
     return std::string();
-}
-
-static std::string get_extension(const fs::Entry &entry)
-{
-    fs::Path path(entry);
-    return get_extension(path);
 }
 
 class FilteringStreamDeleter
@@ -1175,7 +1163,7 @@ bool readArrayChunkBinary(std::istream &stream, D *buf, const size_t num)
     return true;
 }
 
-static const size_t bufsiz = 16384;
+static const size_t bufsiz = 1UL << 12;
 
 template <typename T, typename D>
 bool readVectorArrayBinary(std::istream &stream, T *x, T *y, T *z, const size_t lines)

@@ -1,5 +1,5 @@
-#ifndef SHM_OBJ_REF_H
-#define SHM_OBJ_REF_H
+#ifndef VISTLE_CORE_SHM_OBJ_REF_H
+#define VISTLE_CORE_SHM_OBJ_REF_H
 
 #include <string>
 #include "shmname.h"
@@ -20,7 +20,6 @@ public:
     shm_obj_ref();
     shm_obj_ref(const std::string &name, ObjType *p);
     shm_obj_ref(const shm_obj_ref &other);
-    shm_obj_ref(const shm_name_t name);
     ~shm_obj_ref();
 
     template<typename... Args>
@@ -32,8 +31,8 @@ public:
     void construct(const Args &...args);
 
     const shm_obj_ref &operator=(const shm_obj_ref &rhs);
-    const shm_obj_ref &operator=(typename ObjType::const_ptr rhs);
-    const shm_obj_ref &operator=(typename ObjType::ptr rhs);
+    const shm_obj_ref &operator=(const typename ObjType::const_ptr &rhs);
+    const shm_obj_ref &operator=(const typename ObjType::ptr &rhs);
     const shm_obj_ref &operator=(const typename ObjType::Data *rhs);
     bool valid() const;
     typename ObjType::const_ptr getObject() const;
@@ -59,6 +58,7 @@ private:
     void load(Archive &ar);
 };
 } // namespace vistle
-#endif
 
-#include "shm_obj_ref_impl.h"
+//#include "shm_obj_ref_impl.h"
+
+#endif

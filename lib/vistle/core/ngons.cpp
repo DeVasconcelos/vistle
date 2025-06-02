@@ -36,6 +36,7 @@ void Ngons<N>::refreshImpl() const
         m_ghost = nullptr;
     }
     m_numCorners = (d && d->cl.valid()) ? d->cl->size() : 0;
+    m_celltree = nullptr;
 }
 
 template<int N>
@@ -123,6 +124,24 @@ std::vector<Index> Ngons<N>::cellVertices(Index elem) const
 }
 
 template<int N>
+Vector3 Ngons<N>::cellCenter(Index elem) const
+{
+    const Scalar *x = &this->x()[0];
+    const Scalar *y = &this->y()[0];
+    const Scalar *z = &this->z()[0];
+    auto verts = cellVertices(elem);
+    Vector3 center(0, 0, 0);
+    if (verts.empty())
+        return center;
+    for (auto v: verts) {
+        Vector3 p(x[v], y[v], z[v]);
+        center += p;
+    }
+    center *= 1.0f / verts.size();
+    return center;
+}
+
+template<int N>
 bool Ngons<N>::hasCelltree() const
 {
     if (m_celltree)
@@ -137,7 +156,7 @@ Ngons<N>::Celltree::const_ptr Ngons<N>::getCelltree() const
     if (m_celltree)
         return m_celltree;
 
-    typename Data::mutex_lock_type lock(d()->mutex);
+    typename Data::mutex_lock_type lock(d()->attachment_mutex);
     if (!hasAttachment("celltree")) {
         refresh();
         const Index *corners = nullptr;
@@ -236,6 +255,7 @@ void Ngons<N>::setGhost(Index index, bool isGhost)
     if (this->d()->ghost->size() < getNumElements())
         this->d()->ghost->resize(getNumElements(), cell::NORMAL);
     this->d()->ghost->at(index) = isGhost ? cell::GHOST : cell::NORMAL;
+    refreshImpl();
 }
 
 template<int N>
@@ -301,6 +321,18 @@ template<int N>
 Index Ngons<N>::getNumCorners() const
 {
     return m_numCorners;
+}
+
+template<int N>
+void Ngons<N>::resetCorners()
+{
+    d()->cl = ShmVector<Index>();
+    d()->cl.construct();
+
+    d()->ghost = ShmVector<Byte>();
+    d()->ghost.construct();
+
+    refreshImpl();
 }
 
 template<int N>

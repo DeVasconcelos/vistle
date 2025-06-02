@@ -43,7 +43,6 @@
 #include <vistle/core/messages.h>
 
 #include <QApplication>
-#include <QDebug>
 
 #ifdef HAVE_PYTHON
 namespace py = pybind11;
@@ -157,6 +156,10 @@ void VistleConsole::printHistory()
 void VistleConsole::appendHtml(const QString &text, int type)
 {
     using namespace vistle::message;
+    if (type == SendText::Cerr || type == SendText::Clog || type == SendText::Cout) {
+        // don't spam console, show only in module view
+        return;
+    }
 
     // save the current command
     QTextCursor cursor = textCursor();
@@ -193,6 +196,11 @@ void VistleConsole::appendHtml(const QString &text, int type)
 void VistleConsole::appendInfo(const QString &text, int type)
 {
     using namespace vistle::message;
+
+    if (type == SendText::Cerr || type == SendText::Clog || type == SendText::Cout) {
+        // don't spam console, show only in module view
+        return;
+    }
 
     // save the current command
     QTextCursor cursor = textCursor();
@@ -247,7 +255,7 @@ VistleConsole *VistleConsole::the()
 //QTcl console constructor (init the QTextEdit & the attributes)
 VistleConsole::VistleConsole(QWidget *parent)
 #ifdef HAVE_PYTHON
-: QConsole(parent, "Type \"help(vistle)\" for help, \"help()\" for general help ")
+: QConsole(parent, "<p>Type \"<tt>help(vistle)</tt>\" for help, \"<tt>help()</tt>\" for general help</p>")
 #else
 : QConsole(parent)
 #endif
@@ -281,31 +289,33 @@ void VistleConsole::init()
 #endif
 
     try {
-        PyRun_SimpleString("import sys\n"
+        std::string pyCode = "import sys\n"
 
-                           "import _redirector\n"
-                           "sys.stdout = _redirector.redirector()\n"
-                           "sys.stderr = _redirector.redirector(True)\n"
+                             "import _redirector\n"
+                             "sys.stdout = _redirector.redirector()\n"
+                             "sys.stderr = _redirector.redirector(True)\n"
 
-                           "sys.path.insert(0, \".\")\n" // add current path
+                             "sys.path.insert(0, \".\")\n" // add current path
 
-                           "import _console\n"
+                             "import _console\n"
 
-                           "import builtins\n"
-                           "builtins.clear=_console.clear\n"
-                           "builtins.reset=_console.reset\n"
-                           "builtins.save=_console.save\n"
-                           "builtins.load=_console.load\n"
-                           "builtins.history=_console.history\n"
-                           //"builtins.quit=_console.quit\n"
-                           //"builtins.exit=_console.quit\n"
-                           "builtins.input=_console.raw_input\n"
+                             "import builtins\n"
+                             "builtins.clear=_console.clear\n"
+                             "builtins.reset=_console.reset\n"
+                             "builtins.save=_console.save\n"
+                             "builtins.load=_console.load\n"
+                             "builtins.history=_console.history\n"
+                             //"builtins.quit=_console.quit\n"
+                             //"builtins.exit=_console.quit\n"
+                             "builtins.input=_console.raw_input\n"
 
 #ifdef USE_RLCOMPLETER
-                           "import rlcompleter\n"
-                           "builtins.completer=rlcompleter.Completer()\n"
+                             "import rlcompleter\n"
+                             "builtins.completer=rlcompleter.Completer()\n"
 #endif
-        );
+            ;
+        PyRun_SimpleString(pyCode.c_str());
+
     } catch (...) {
         std::cerr << "error running Python initialisation" << std::endl;
     }

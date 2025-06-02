@@ -1,5 +1,5 @@
-#ifndef RENDERER_COVER_H
-#define RENDERER_COVER_H
+#ifndef VISTLE_COVER_COVER_H
+#define VISTLE_COVER_COVER_H
 
 #include <future>
 #include <string>
@@ -92,7 +92,7 @@ public:
 
     struct DelayedObject {
         DelayedObject(std::shared_ptr<PluginRenderObject> ro, VistleGeometryGenerator generator);
-        std::shared_ptr<PluginRenderObject> ro;
+        std::shared_ptr<PluginRenderObject> pro;
         std::string name;
         VistleGeometryGenerator generator;
         std::shared_future<osg::Geode *> node_future;

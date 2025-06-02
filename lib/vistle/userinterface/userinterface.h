@@ -1,5 +1,5 @@
-#ifndef USERINTERFACE_H
-#define USERINTERFACE_H
+#ifndef VISTLE_USERINTERFACE_USERINTERFACE_H
+#define VISTLE_USERINTERFACE_USERINTERFACE_H
 
 #include <condition_variable>
 #include <exception>
@@ -86,7 +86,7 @@ protected:
 
     bool handleMessage(const message::Message *message, const buffer &payload);
 
-    boost::asio::io_service m_ioService;
+    boost::asio::io_context m_ioContext;
     boost::asio::ip::tcp::socket m_socket;
 
     struct RequestedMessage {

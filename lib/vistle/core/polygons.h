@@ -1,5 +1,5 @@
-#ifndef POLYGONS_H
-#define POLYGONS_H
+#ifndef VISTLE_CORE_POLYGONS_H
+#define VISTLE_CORE_POLYGONS_H
 
 #include "scalar.h"
 #include "shm.h"
@@ -21,6 +21,8 @@ public:
     static Data *create(const size_t numElements = 0, const size_t numCorners = 0, const size_t numVertices = 0,
                         const Meta &meta = Meta());
     V_DATA_END(Polygons);
+
+    Index cellNumFaces(Index elem) const override;
 };
 
 } // namespace vistle

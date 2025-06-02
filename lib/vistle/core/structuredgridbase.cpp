@@ -10,11 +10,6 @@
 
 namespace vistle {
 
-#ifndef _WIN32
-constexpr std::array<Index, 8> StructuredGridBase::HexahedronIndices[3];
-#endif
-
-
 // IS GHOST CELL CHECK
 //-------------------------------------------------------------------------
 bool StructuredGridBase::isGhostCell(Index elem) const
@@ -73,6 +68,7 @@ std::vector<Index> StructuredGridBase::getNeighborElements(Index elem) const
 
     const Index dims[3] = {getNumDivisions(0), getNumDivisions(1), getNumDivisions(2)};
     const auto coords = cellCoordinates(elem, dims);
+    elems.reserve(6);
     for (int d = 0; d < 3; ++d) {
         auto c = coords;
         if (coords[d] >= 1) {

@@ -5,6 +5,8 @@
 #include <iostream>
 #include <algorithm>
 #include <vistle/util/tools.h>
+#include <vistle/core/parametermanager.h>
+
 
 #define CERR std::cerr << "Port@" << (m_stateTracker ? m_stateTracker->m_name : "(null)") << ": "
 
@@ -16,6 +18,7 @@ PortTracker::PortTracker(): m_stateTracker(nullptr)
 PortTracker::~PortTracker()
 {
     std::vector<int> modules;
+    modules.reserve(m_ports.size());
     for (auto &m: m_ports) {
         modules.emplace_back(m.first);
     }
@@ -138,7 +141,7 @@ std::vector<message::Buffer> PortTracker::removePort(const Port &p)
     }
 
     PortMap::iterator pi = portMap->find(p.getName());
-    assert(pi != portMap->end());
+    //assert(pi != portMap->end()); // FIXME: this does not always work
     if (pi == portMap->end()) {
         return ret;
     }
@@ -149,6 +152,7 @@ std::vector<message::Buffer> PortTracker::removePort(const Port &p)
 
     check();
     const Port::ConstPortSet &cl = port->connections();
+    ret.reserve(cl.size());
     while (!cl.empty()) {
         size_t oldsize = cl.size();
         const Port *other = *cl.begin();
@@ -377,6 +381,7 @@ std::vector<std::string> PortTracker::getPortNames(const int moduleID, Port::Typ
 {
     std::vector<std::string> result;
     const auto ports = getPorts(moduleID, type);
+    result.reserve(ports.size());
     for (const auto &port: ports)
         result.push_back(port->getName());
     return result;
@@ -418,6 +423,7 @@ std::vector<Port *> PortTracker::getPorts(const int moduleID, Port::Type type, b
 
     const PortMap &portmap = *mports->second;
     const PortOrder &portorder = *portOrderIt->second;
+    result.reserve(portorder.size());
     for (PortOrder::const_iterator it = portorder.begin(); it != portorder.end(); ++it) {
         const std::string &name = it->second;
         auto it2 = portmap.find(name);
@@ -474,6 +480,7 @@ std::vector<message::Buffer> PortTracker::removeModule(int moduleId)
     if (modulePortsIt != m_ports.end()) {
         std::vector<Port *> toRemove;
         const auto &modulePorts = *modulePortsIt->second;
+        toRemove.reserve(modulePorts.size());
         for (const auto &port: modulePorts) {
             toRemove.push_back(port.second);
         }
@@ -486,6 +493,26 @@ std::vector<message::Buffer> PortTracker::removeModule(int moduleId)
         assert(modulePorts.empty());
 
         m_ports.erase(modulePortsIt);
+    }
+
+    auto sessionPortsIt = m_ports.find(message::Id::Vistle);
+    if (sessionPortsIt != m_ports.end()) {
+        std::vector<Port *> toRemove;
+        const auto &sessionPorts = *sessionPortsIt->second;
+        toRemove.reserve(sessionPorts.size());
+        for (const auto &port: sessionPorts) {
+            auto name = port.second->getName();
+            if (ParameterManager::parameterTargetModule(message::Id::Vistle, name) == moduleId) {
+                toRemove.push_back(port.second);
+            }
+        }
+
+        for (auto p: toRemove) {
+            auto r = removePort(*p);
+            std::copy(r.begin(), r.end(), std::back_inserter(ret));
+        }
+
+        m_ports.erase(sessionPortsIt);
     }
 
     if (m_ports.find(moduleId) != m_ports.end()) {

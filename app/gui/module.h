@@ -1,5 +1,5 @@
-#ifndef GUI_MODULE_H
-#define GUI_MODULE_H
+#ifndef VISTLE_GUI_MODULE_H
+#define VISTLE_GUI_MODULE_H
 
 #include <QAction>
 #include <QFileDialog>
@@ -12,15 +12,16 @@
 #include <QString>
 
 #include <vistle/core/uuid.h>
-
-#include <vistle/userinterface/vistleconnection.h>
+#include <vistle/core/parameter.h>
+#include <vistle/core/messages.h>
 
 #include "port.h"
+#include "dataflownetwork.h"
 
 namespace gui {
-
 class Connection;
 class DataFlowNetwork;
+class ParameterPopup;
 
 const bool LayersAsOpacity = true;
 
@@ -30,16 +31,22 @@ class Module: public QObject, public QGraphicsRectItem {
 
     typedef QGraphicsRectItem Base;
 
-    static const double portDistance;
-    static const double borderWidth;
-    static bool s_snapToGrid;
+    static double portDistance;
+    static double borderWidth;
 
 public:
-    enum Status { SPAWNING, INITIALIZED, KILLED, BUSY, EXECUTING, ERROR_STATUS };
+    static void configure();
+
+    enum Status { SPAWNING, INITIALIZED, KILLED, BUSY, EXECUTING, ERROR_STATUS, CRASHED };
 
     struct Message {
         int type;
         QString text;
+    };
+    struct ParameterConnectionRequest {
+        int moduleId;
+        QString paramName;
+        QPoint pos;
     };
 
     Module(QGraphicsItem *parent = nullptr, QString name = QString());
@@ -58,12 +65,13 @@ public:
     QPointF portPos(const Port *port) const;
     void setStatus(Module::Status status);
     void setStatusText(QString text, int prio);
-    void setInfo(QString text);
+    void setInfo(QString text, int type);
     void clearMessages();
     void moduleMessage(int type, QString message);
     QList<Message> &messages();
     void setMessagesVisibility(bool visible);
     bool messagesVisible() const;
+    bool isOutputStreaming() const;
 
     void addPort(const vistle::Port &port);
     void removePort(const vistle::Port &port);
@@ -101,11 +109,14 @@ public:
     DataFlowNetwork *scene() const;
 
     static QColor hubColor(int hub);
+    //show popup window with own parameters to create a connection to the callers parameter
+    void showParameters(const ParameterConnectionRequest &request);
 signals:
     void createModuleCompound();
     void selectConnected(int direction, int id, QString port = QString());
     void visibleChanged(bool visible);
     void callshowErrorInMainThread();
+    void outputStreamingChanged(bool enable);
 
 protected:
     void mousePressEvent(QGraphicsSceneMouseEvent *event) override;
@@ -126,9 +137,13 @@ public slots:
     void cancelExecModule();
     void deleteModule();
     void attachDebugger();
+    void replayOutput();
+    void setOutputStreaming(bool enable);
     void projectToGrid();
     void setParameterDefaults();
     void showError();
+    void highlightModule(int moduleId);
+    void setDisplayName(QString name);
 
 private:
     void createGeometry();
@@ -137,11 +152,17 @@ private:
     void updateText();
     void doLayout();
     void sendSpawn(int hub, const std::string &module, vistle::message::Spawn::ReferenceType type);
+    void setToolTip(QString text);
+    void createParameterPopup();
+    void changeDisplayName();
 
     QMenu *m_moduleMenu = nullptr;
+    QAction *m_changeNameAct = nullptr;
     QAction *m_selectUpstreamAct = nullptr, *m_selectDownstreamAct = nullptr, *m_selectConnectedAct = nullptr;
     QAction *m_deleteThisAct = nullptr, *m_deleteSelAct = nullptr;
     QAction *m_attachDebugger = nullptr;
+    QAction *m_replayOutput = nullptr;
+    QAction *m_toggleOutputStreaming = nullptr;
     QAction *m_execAct = nullptr;
     QAction *m_cancelExecAct = nullptr;
     QAction *m_restartAct = nullptr;
@@ -152,7 +173,9 @@ private:
     QAction *m_cloneModule = nullptr;
     QAction *m_cloneModuleLinked = nullptr;
     QMenu *m_layerMenu = nullptr;
-
+    QMenu *m_advancedMenu = nullptr;
+    ParameterPopup *m_parameterPopup = nullptr;
+    ParameterConnectionRequest m_parameterConnectionRequest;
 
     int m_hub;
     int m_id;
@@ -162,6 +185,7 @@ private:
     ///\todo add data structure for the module information
     QString m_name;
     QString m_displayName;
+    QString m_visibleName;
     Module::Status m_Status;
     QString m_statusText;
     QString m_info;
@@ -178,21 +202,27 @@ private:
     std::map<vistle::Port, Port *> m_vistleToGui;
 
     QColor m_borderColor;
+    bool m_highlighted = false;
 };
 
 template<class T>
 void Module::setParameter(QString name, const T &value) const
 {
-    vistle::VistleConnection::the().setParameter(id(), name.toStdString(), value);
+    if (id() == vistle::message::Id::Invalid) {
+        return;
+    }
+    DataFlowNetwork::setParameter<T>(id(), name, value);
 }
 
 template<class T>
 std::shared_ptr<vistle::ParameterBase<T>> Module::getParameter(QString name) const
 {
-    return std::dynamic_pointer_cast<vistle::ParameterBase<T>>(
-        vistle::VistleConnection::the().getParameter(id(), name.toStdString()));
+    if (id() == vistle::message::Id::Invalid) {
+        return nullptr;
+    }
+    return DataFlowNetwork::getParameter<T>(id(), name);
 }
 
 } //namespace gui
 
-#endif // VMODULE_H
+#endif

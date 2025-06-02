@@ -1,5 +1,5 @@
-#ifndef LINES_H
-#define LINES_H
+#ifndef VISTLE_CORE_LINES_H
+#define VISTLE_CORE_LINES_H
 
 #include "scalar.h"
 #include "shm.h"
@@ -38,6 +38,8 @@ public:
     static Data *create(const std::string &name = "", const size_t numElements = 0, const size_t numCorners = 0,
                         const size_t numVertices = 0, const Meta &meta = Meta());
     V_DATA_END(Lines);
+
+    Index cellNumFaces(Index elem) const override;
 };
 
 } // namespace vistle

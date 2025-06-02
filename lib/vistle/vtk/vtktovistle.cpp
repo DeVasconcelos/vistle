@@ -141,7 +141,7 @@ Object::ptr vtkUGrid2Vistle(vtkUnstructuredGrid *vugrid, std::string &diagnostic
     Index ncoordVtk = vugrid->GetNumberOfPoints();
     Index nelemVtk = vugrid->GetNumberOfCells();
 
-    UnstructuredGrid::ptr cugrid = make_ptr<UnstructuredGrid>(sizes.numElements, (Index)0, ncoordVtk);
+    UnstructuredGrid::ptr cugrid = std::make_shared<UnstructuredGrid>(sizes.numElements, (Index)0, ncoordVtk);
 
     Scalar *xc = cugrid->x().data();
     Scalar *yc = cugrid->y().data();
@@ -282,19 +282,12 @@ Object::ptr vtkUGrid2Vistle(vtkUnstructuredGrid *vugrid, std::string &diagnostic
             auto lagrangeCell = dynamic_cast<vtkLagrangeHexahedron *>(vugrid->GetCell(i));
             lagrangeConnectivityToLinearHexahedron(lagrangeCell->GetOrder(), pts, connlist);
             assert(connlist.size() == 8 * (elemVistle + 1));
-        } else if (vugrid->GetCellType(i) == VTK_PIXEL) {
+        } else if (vugrid->GetCellType(i) == VTK_PIXEL || vugrid->GetCellType(i) == VTK_VOXEL) {
             // account for different order
-            Index vtkPixelOrder[] = {0, 1, 3, 2};
+            constexpr Index vtkOrder[] = {0, 1, 3, 2, 4, 5, 7, 6};
             for (vtkIdType j = 0; j < npts; ++j) {
                 assert(pts[j] >= 0);
-                connlist.emplace_back(pts[vtkPixelOrder[j]]);
-            }
-        } else if (vugrid->GetCellType(i) == VTK_VOXEL) {
-            // account for different order
-            Index vtkVoxelOrder[] = {0, 1, 3, 2, 4, 5, 7, 6};
-            for (vtkIdType j = 0; j < npts; ++j) {
-                assert(pts[j] >= 0);
-                connlist.emplace_back(pts[vtkVoxelOrder[j]]);
+                connlist.emplace_back(pts[vtkOrder[j]]);
             }
         } else {
             for (vtkIdType j = 0; j < npts; ++j) {
@@ -340,7 +333,7 @@ Object::ptr vtkPoly2Vistle(vtkPolyData *vpolydata, std::string &diag)
 
         vtkCellArray *polys = vpolydata->GetPolys();
         Index ncorner = polys->GetNumberOfConnectivityEntries() - npolys + 3 * nstriptris;
-        Polygons::ptr cpoly = make_ptr<Polygons>(nstriptris + npolys, ncorner, ncoord);
+        Polygons::ptr cpoly = std::make_shared<Polygons>(nstriptris + npolys, ncorner, ncoord);
         coords = cpoly;
 
         Index *cornerlist = cpoly->cl().data();
@@ -390,7 +383,7 @@ Object::ptr vtkPoly2Vistle(vtkPolyData *vpolydata, std::string &diag)
     } else if (nlines > 0) {
         vtkCellArray *lines = vpolydata->GetLines();
         Index ncorner = lines->GetConnectivityArray()->GetSize();
-        Lines::ptr clines = make_ptr<Lines>(nlines, ncorner, ncoord);
+        Lines::ptr clines = std::make_shared<Lines>(nlines, ncorner, ncoord);
         coords = clines;
 
         Index *cornerlist = clines->cl().data();
@@ -418,7 +411,7 @@ Object::ptr vtkPoly2Vistle(vtkPolyData *vpolydata, std::string &diag)
     } else if (nverts > 0) {
         if (nverts != ncoord)
             return coords;
-        Points::ptr cpoints = make_ptr<Points>(ncoord);
+        Points::ptr cpoints = std::make_shared<Points>(ncoord);
         coords = cpoints;
     }
 
@@ -442,22 +435,16 @@ Object::ptr vtkSGrid2Vistle(vtkStructuredGrid *vsgrid)
     int dim[3];
     vsgrid->GetDimensions(dim);
 
-    StructuredGrid::ptr csgrid = make_ptr<StructuredGrid>((Index)dim[0], (Index)dim[1], (Index)dim[2]);
+    StructuredGrid::ptr csgrid = std::make_shared<StructuredGrid>((Index)dim[0], (Index)dim[1], (Index)dim[2]);
     Scalar *xc = csgrid->x().data();
     Scalar *yc = csgrid->y().data();
     Scalar *zc = csgrid->z().data();
 
-    Index l = 0;
-    for (Index i = 0; i < Index(dim[0]); ++i) {
-        for (Index j = 0; j < Index(dim[1]); ++j) {
-            for (Index k = 0; k < Index(dim[2]); ++k) {
-                Index idx = k * (dim[0] * dim[1]) + j * dim[0] + i;
-                xc[l] = vsgrid->GetPoint(idx)[0];
-                yc[l] = vsgrid->GetPoint(idx)[1];
-                zc[l] = vsgrid->GetPoint(idx)[2];
-                ++l;
-            }
-        }
+    auto size = Index(dim[0]) * Index(dim[1]) * Index(dim[2]);
+    for (Index l = 0; l < size; ++l) {
+        xc[l] = vsgrid->GetPoint(l)[0];
+        yc[l] = vsgrid->GetPoint(l)[1];
+        zc[l] = vsgrid->GetPoint(l)[2];
     }
 
     return csgrid;
@@ -473,7 +460,7 @@ Object::ptr vtkImage2Vistle(vtkImageData *vimage)
     vimage->GetOrigin(origin);
     double spacing[3] = {1., 1., 1.};
     vimage->GetSpacing(spacing);
-    UniformGrid::ptr ug = make_ptr<UniformGrid>((Index)n[0], (Index)n[1], (Index)n[2]);
+    UniformGrid::ptr ug = std::make_shared<UniformGrid>((Index)n[0], (Index)n[1], (Index)n[2]);
     for (int c = 0; c < 3; ++c) {
         ug->min()[c] = origin[c] + e[2 * c] * spacing[c];
         ug->max()[c] = origin[c] + (e[2 * c + 1]) * spacing[c];
@@ -493,7 +480,7 @@ Object::ptr vtkRGrid2Vistle(vtkRectilinearGrid *vrgrid)
     int n[3];
     vrgrid->GetDimensions(n);
 
-    RectilinearGrid::ptr rgrid = make_ptr<RectilinearGrid>((Index)n[0], (Index)n[1], (Index)n[2]);
+    RectilinearGrid::ptr rgrid = std::make_shared<RectilinearGrid>((Index)n[0], (Index)n[1], (Index)n[2]);
     Scalar *c[3];
     for (int i = 0; i < 3; ++i) {
         c[i] = rgrid->coords(i).data();
@@ -535,7 +522,7 @@ DataBase::ptr vtkArray2Vistle(vtkType *vd, Object::const_ptr grid)
     }
     switch (vd->GetNumberOfComponents()) {
     case 1: {
-        typename Vec<S, 1>::ptr cf = make_ptr<Vec<S, 1>>(n);
+        typename Vec<S, 1>::ptr cf = std::make_shared<Vec<S, 1>>(n);
         S *x = cf->x().data();
         Index l = 0;
         for (Index k = 0; k < dataDim[2]; ++k) {
@@ -552,7 +539,7 @@ DataBase::ptr vtkArray2Vistle(vtkType *vd, Object::const_ptr grid)
         return cf;
     } break;
     case 2: {
-        typename Vec<S, 2>::ptr cv = make_ptr<Vec<S, 2>>(n);
+        typename Vec<S, 2>::ptr cv = std::make_shared<Vec<S, 2>>(n);
         S *x = cv->x().data();
         S *y = cv->y().data();
         Index l = 0;
@@ -578,7 +565,7 @@ DataBase::ptr vtkArray2Vistle(vtkType *vd, Object::const_ptr grid)
         return cv;
     }
     case 3: {
-        typename Vec<S, 3>::ptr cv = make_ptr<Vec<S, 3>>(n);
+        typename Vec<S, 3>::ptr cv = std::make_shared<Vec<S, 3>>(n);
         S *x = cv->x().data();
         S *y = cv->y().data();
         S *z = cv->z().data();
@@ -611,9 +598,6 @@ DataBase::ptr vtkArray2Vistle(vtkType *vd, Object::const_ptr grid)
     return nullptr;
 }
 
-#ifdef SENSEI
-} // anonymous namespace
-#endif
 DataBase::ptr vtkData2Vistle(vtkDataArray *varr, Object::const_ptr grid, std::string &diag)
 {
     DataBase::ptr data;
@@ -676,10 +660,7 @@ DataBase::ptr vtkData2Vistle(vtkDataArray *varr, Object::const_ptr grid, std::st
     return nullptr;
 }
 
-
-#ifndef SENSEI
 } // anonymous namespace
-#endif
 
 vistle::Object::ptr toGrid(vtkDataObject *vtk, std::string *diagnostics)
 {

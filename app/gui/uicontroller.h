@@ -1,5 +1,5 @@
-#ifndef UICONTROLLER_H
-#define UICONTROLLER_H
+#ifndef VISTLE_GUI_UICONTROLLER_H
+#define VISTLE_GUI_UICONTROLLER_H
 
 #include <QObject>
 
@@ -28,6 +28,9 @@ public:
     ~UiController();
     bool init();
     void finish();
+
+    bool eventFilter(QObject *object, QEvent *event) override;
+    void configure();
 
 signals:
     void visibleModuleMessage(int id, int type, QString message);
@@ -93,4 +96,4 @@ private:
 };
 
 } // namespace gui
-#endif // UICONTROLLER_H
+#endif

@@ -33,11 +33,7 @@ using std::shared_ptr;
 DataProxy::DataProxy(StateTracker &state, unsigned short basePort, bool changePort)
 : m_hubId(message::Id::Invalid)
 , m_stateTracker(state)
-#if BOOST_VERSION >= 106600
 , m_workGuard(asio::make_work_guard(m_io))
-#else
-, m_workGuard(new asio::io_service::work(m_io))
-#endif
 , m_port(basePort)
 , m_acceptorv4(m_io)
 , m_acceptorv6(m_io)
@@ -132,7 +128,7 @@ void DataProxy::setTrace(message::Type type)
     m_traceMessages = type;
 }
 
-asio::io_service &DataProxy::io()
+asio::io_context &DataProxy::io()
 {
     return m_io;
 }
@@ -150,6 +146,8 @@ int DataProxy::idToHub(int id) const
 
 void DataProxy::cleanUp()
 {
+    m_shuttingDown = true;
+
     if (io().stopped()) {
         if (m_acceptorv4.is_open()) {
             m_acceptorv4.cancel();
@@ -432,7 +430,9 @@ void DataProxy::msgForward(std::shared_ptr<tcp_socket> sock, EndPointType type)
     if (store_and_forward) {
         async_recv(*sock, *msg, [this, sock, msg, type](error_code ec, std::shared_ptr<buffer> payload) {
             if (ec) {
-                CERR << "msgForward, dest=" << toString(type) << ": error " << ec.message() << std::endl;
+                if (!m_shuttingDown || ec != boost::asio::error::eof) {
+                    CERR << "msgForward, dest=" << toString(type) << ": error " << ec.message() << std::endl;
+                }
                 return;
             }
 
@@ -525,7 +525,9 @@ void DataProxy::msgForward(std::shared_ptr<tcp_socket> sock, EndPointType type)
     } else {
         async_recv_header(*sock, *msg, [this, sock, msg, type](error_code ec) {
             if (ec) {
-                CERR << "msgForward, dest=" << toString(type) << ": error " << ec.message() << std::endl;
+                if (!m_shuttingDown || ec != boost::asio::error::eof) {
+                    CERR << "msgForward, dest=" << toString(type) << ": error " << ec.message() << std::endl;
+                }
                 return;
             }
 
@@ -664,7 +666,7 @@ bool DataProxy::connectRemoteData(const message::AddHub &remote)
     timer.expires_from_now(boost::posix_time::seconds(connection_timeout));
     timer.async_wait([this, hubId, connectingSockets](const boost::system::error_code &ec) {
         if (ec == asio::error::operation_aborted) {
-            // timer was cancelled
+            // timer was canceled
             return;
         }
         if (ec) {
@@ -682,9 +684,12 @@ bool DataProxy::connectRemoteData(const message::AddHub &remote)
             if (ec) {
                 CERR << "cancelling operations on socket failed: " << ec.message() << std::endl;
             } else {
+                bool open = s->is_open();
                 s->close(ec);
                 if (ec) {
-                    CERR << "closing socket failed: " << ec.message() << std::endl;
+                    if (open) {
+                        CERR << "closing socket failed: " << ec.message() << std::endl;
+                    }
                 }
             }
         }
@@ -783,14 +788,14 @@ bool DataProxy::addSocket(const message::Identify &id, std::shared_ptr<DataProxy
     startThread();
     startThread();
 
-    // transfer socket to DataProxy's io service
+    // transfer socket to DataProxy's io context
     auto sock2 = std::make_shared<tcp_socket>(m_io);
     if (sock->local_endpoint().protocol() == boost::asio::ip::tcp::v4()) {
         sock2->assign(boost::asio::ip::tcp::v4(), sock->release());
     } else if (sock->local_endpoint().protocol() == boost::asio::ip::tcp::v6()) {
         sock2->assign(boost::asio::ip::tcp::v6(), sock->release());
     } else {
-        CERR << "could not transfer socket to io service" << std::endl;
+        CERR << "could not transfer socket to io context" << std::endl;
         return false;
     }
 

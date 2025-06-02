@@ -1,10 +1,12 @@
-#ifndef SHM_IMPL_H
-#define SHM_IMPL_H
+#ifndef VISTLE_CORE_SHM_IMPL_H
+#define VISTLE_CORE_SHM_IMPL_H
 
 #include <boost/type_traits.hpp>
 #include <boost/mpl/find.hpp>
 #include <boost/mpl/size.hpp>
 #include <boost/mpl/push_back.hpp>
+#include <boost/mpl/back_inserter.hpp>
+#include <boost/mpl/copy.hpp>
 #include <iostream>
 #include <cassert>
 
@@ -16,9 +18,7 @@
 
 namespace vistle {
 
-typedef boost::mpl::push_back<Scalars, CelltreeNode<sizeof(Index), 1>>::type VectorTypes1;
-typedef boost::mpl::push_back<VectorTypes1, CelltreeNode<sizeof(Index), 2>>::type VectorTypes2;
-typedef boost::mpl::push_back<VectorTypes2, CelltreeNode<sizeof(Index), 3>>::type VectorTypes;
+typedef boost::mpl::copy<CelltreeNodeTypes, boost::mpl::back_inserter<Scalars>>::type VectorTypes;
 
 template<typename S>
 unsigned scalarTypeId()

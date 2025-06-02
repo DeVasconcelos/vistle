@@ -2,6 +2,7 @@
 #include "modulebrowser.h"
 #include "dataflownetwork.h"
 #include "module.h"
+#include "parameters.h"
 
 #include <QApplication>
 #include <QMenu>
@@ -136,6 +137,9 @@ void DataFlowView::dragEnterEvent(QDragEnterEvent *e)
     if (mimeFormats.contains(ModuleBrowser::mimeFormat())) {
         e->acceptProposedAction();
     }
+    if (mimeFormats.contains(Parameters::mimeFormat())) {
+        e->acceptProposedAction();
+    }
 }
 
 void DataFlowView::dragMoveEvent(QDragMoveEvent *event)
@@ -167,6 +171,21 @@ void DataFlowView::dropEvent(QDropEvent *event)
             QString moduleName;
             stream >> moduleName;
             scene()->addModule(hubId, moduleName, newPos);
+        }
+    }
+    if (event->mimeData()->formats().contains(Parameters::mimeFormat())) {
+        auto module = scene()->findModule(mapToScene(event->pos()));
+        if (module) {
+            QByteArray encoded = event->mimeData()->data(Parameters::mimeFormat());
+            QDataStream stream(&encoded, QIODevice::ReadOnly);
+
+            while (!stream.atEnd()) {
+                int moduleId;
+                stream >> moduleId;
+                QString parameterName;
+                stream >> parameterName;
+                module->showParameters({moduleId, parameterName, mapToGlobal(event->pos())});
+            }
         }
     }
 }
@@ -459,6 +478,9 @@ void DataFlowView::zoomAll()
     if (!scene())
         return;
 
+    if (scene()->modules().empty())
+        return;
+
     QRectF bounds = scene()->itemsBoundingRect();
     bounds.adjust(-Port::portSize, -Port::portSize, +Port::portSize, +Port::portSize);
     scene()->setSceneRect(bounds); // Re-shrink the scene to it's bounding contents
@@ -469,11 +491,17 @@ void DataFlowView::zoomAll()
         }
     }
     fitInView(bounds, Qt::KeepAspectRatio);
+    auto t = transform();
+    float MaxScale = 2.5f;
+    if (t.m11() > MaxScale || t.m22() > MaxScale) {
+        t.setMatrix(MaxScale, t.m12(), t.m13(), t.m21(), MaxScale, t.m23(), t.m31(), t.m32(), t.m33());
+        setTransform(t);
+    }
 }
 
 bool DataFlowView::snapshot(const QString &filename)
 {
-    //scene()->itemsBoundingRect() does not return a correct boundig box
+    //scene()->itemsBoundingRect() does not return a correct bounding box
     scene()->setSceneRect(scene()->itemsBoundingRect()); // Re-shrink the scene to it's bounding contents
 
     QImage image(scene()->sceneRect().size().toSize() * 2,

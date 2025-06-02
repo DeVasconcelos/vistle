@@ -5,8 +5,11 @@
 #include <vistle/config/array.h>
 
 #include <iostream>
+#include <regex>
 
-#define CERR std::cerr << m_name << "_" << id() << " "
+#include "parametermanager_impl.h"
+
+#define CERR std::cerr << message::Id::name(m_name, m_id) << ": "
 
 namespace vistle {
 
@@ -15,6 +18,24 @@ void ParameterManager::sendParameterMessageWithPayload(message::Message &message
 {
     auto pl = addPayload(message, payload);
     return sendParameterMessage(message, &pl);
+}
+
+int ParameterManager::parameterTargetModule(int id, const std::string &name)
+{
+    if (id != message::Id::Vistle) {
+        return id;
+    }
+
+    auto pat = std::regex("\\[([0-9]+)\\]$");
+    std::sregex_iterator it(name.begin(), name.end(), pat), end;
+    for (; it != end; ++it) {
+        const std::smatch &match = *it;
+        const std::string str = match.str(1);
+        int num = atol(str.c_str());
+        return num;
+    }
+
+    return id;
 }
 
 ParameterManager::ParameterManager(const std::string &name, int id): m_id(id), m_name(name)
@@ -48,6 +69,7 @@ void ParameterManager::init()
 void ParameterManager::quit()
 {
     std::vector<std::string> toRemove;
+    toRemove.reserve(m_parameters.size());
     for (auto &param: m_parameters) {
         if (param.second.owner)
             toRemove.push_back(param.second.param->getName());
@@ -74,7 +96,6 @@ bool ParameterManager::handleMessage(const message::AddParameter &add)
         break;
     case Parameter::Integer:
         param = addParameter<Integer>(name, desc, Integer(), pres);
-        std::cerr << "add int param: " << name << std::endl;
         break;
     case Parameter::Float:
         param = addParameter<Float>(name, desc, Float(), pres);
@@ -191,10 +212,21 @@ void ParameterManager::setName(const std::string &name)
     m_name = name;
 }
 
-void ParameterManager::applyDelayedChanges()
+bool ParameterManager::applyDelayedChanges()
 {
-    changeParameters(m_delayedChanges);
-    m_delayedChanges.clear();
+    decltype(m_delayedChanges) delayedChanges;
+    std::swap(m_delayedChanges, delayedChanges);
+    if (m_inApplyDelayedChanges) {
+        if (delayedChanges.empty()) {
+            return true;
+        }
+        return changeParameters(delayedChanges);
+    }
+
+    m_inApplyDelayedChanges = true;
+    bool ret = changeParameters(delayedChanges);
+    m_inApplyDelayedChanges = false;
+    return ret;
 }
 
 Parameter *ParameterManager::addParameterGeneric(const std::string &name, std::shared_ptr<Parameter> param)
@@ -225,6 +257,8 @@ bool ParameterManager::removeParameter(const std::string &name)
         message::RemoveParameter remove(*it->second.param, m_name);
         remove.setDestId(message::Id::ForBroadcast);
         sendParameterMessage(remove);
+    } else {
+        CERR << "removeParameter not owner: " << name << std::endl;
     }
 
     it = m_parameters.find(name);
@@ -260,11 +294,11 @@ bool ParameterManager::updateParameter(const std::string &name, const Parameter 
 
     message::SetParameter set(m_id, name, i->second.param, rt);
     if (inResponseTo) {
+        if (!i->second.owner)
+            return true;
         set.setReferrer(inResponseTo->uuid());
         if (inResponseTo->isDelayed())
             set.setDelayed();
-        if (!i->second.owner)
-            return true;
     }
     set.setDestId(message::Id::ForBroadcast);
     sendParameterMessage(set);
@@ -281,6 +315,7 @@ void ParameterManager::setParameterChoices(const std::string &name, const std::v
 
 void ParameterManager::setParameterChoices(Parameter *param, const std::vector<std::string> &choices)
 {
+    param->setChoices(choices);
     message::SetParameterChoices sc(param->getName(), choices.size());
     sc.setDestId(message::Id::ForBroadcast);
     message::SetParameterChoices::Payload pl(choices);
@@ -347,6 +382,7 @@ ParameterVector<V> getParameterDefault(config::Access *config, const std::string
         return value;
 
     ParameterVector<V> val;
+    val.reserve(def->size());
     for (size_t i = 0; i < def->size(); ++i) {
         val.push_back((*def)[i]);
     }
@@ -538,8 +574,6 @@ bool ParameterManager::parameterChangedWrapper(const Parameter *p)
         return true;
     }
     m_inParameterChanged = true;
-
-    applyDelayedChanges();
 
     bool ret = changeParameter(p);
     m_inParameterChanged = false;

@@ -2,6 +2,7 @@
 #include "lines_impl.h"
 #include "archives.h"
 #include "validate.h"
+#include "shm_obj_ref_impl.h"
 
 namespace vistle {
 
@@ -85,6 +86,11 @@ void Lines::setCapStyles(Lines::CapStyle start, Lines::CapStyle joint, Lines::Ca
     d()->style[0] = start;
     d()->style[1] = joint;
     d()->style[2] = end;
+}
+
+Index Lines::cellNumFaces(Index elem) const
+{
+    return 0;
 }
 
 void Lines::Data::initData()

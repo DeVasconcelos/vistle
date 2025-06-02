@@ -1,11 +1,12 @@
-#ifndef INSITU_TCP_MESSAGE_H
-#define INSITU_TCP_MESSAGE_H
+#ifndef VISTLE_INSITU_MESSAGE_TCPMESSAGE_H
+#define VISTLE_INSITU_MESSAGE_TCPMESSAGE_H
+
 #include "InSituMessage.h"
 #include "MessageHandler.h"
 #include "export.h"
 
 #include <boost/asio.hpp>
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <thread>
 #include <atomic>
@@ -39,14 +40,10 @@ private:
     boost::mpi::communicator m_comm;
 
     //boost asio stuff
-    boost::asio::io_service m_ioService;
+    boost::asio::io_context m_ioContext;
     std::unique_ptr<boost::asio::ip::tcp::socket> m_socket;
-#if BOOST_VERSION >= 106600
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> m_workGuard;
-#else
-    std::shared_ptr<boost::asio::io_service::work> m_workGuard;
-#endif
-    std::thread m_ioThread; // thread for io_service
+    std::thread m_ioThread; // thread for io_context
     unsigned short m_port = 31299;
     std::array<std::unique_ptr<boost::asio::ip::tcp::acceptor>, 2> m_acceptors;
     std::mutex m_mutex;
@@ -68,4 +65,4 @@ private:
 } // namespace insitu
 } // namespace vistle
 
-#endif // !INSITU_TCP_MESSAGE_H
+#endif

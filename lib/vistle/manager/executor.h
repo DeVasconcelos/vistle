@@ -1,5 +1,5 @@
-#ifndef EXECUTOR_H
-#define EXECUTOR_H
+#ifndef VISTLE_MANAGER_EXECUTOR_H
+#define VISTLE_MANAGER_EXECUTOR_H
 
 #include <string>
 
@@ -24,7 +24,7 @@ public:
 
     virtual bool config(int argc, char *argv[]);
 
-    void run();
+    bool run();
 
     void setVistleRoot(const std::string &directory, const std::string &buildtype);
 

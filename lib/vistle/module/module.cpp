@@ -54,7 +54,6 @@
 //#define DEBUG
 //#define REDUCE_DEBUG
 #define DETAILED_PROGRESS
-#define REDIRECT_OUTPUT
 
 #ifdef DEBUG
 #include <vistle/util/hostname.h>
@@ -146,92 +145,6 @@ using message::Id;
 
 DEFINE_ENUM_WITH_STRING_CONVERSIONS(ObjectValidation, (Disable)(Quick)(Thorough))
 
-#ifdef REDIRECT_OUTPUT
-template<typename CharT, typename TraitsT = std::char_traits<CharT>>
-class msgstreambuf: public std::basic_streambuf<CharT, TraitsT> {
-public:
-    msgstreambuf(Module *mod): m_module(mod), m_console(true), m_gui(false) {}
-
-    ~msgstreambuf()
-    {
-        std::unique_lock<std::recursive_mutex> scoped_lock(m_mutex);
-        flush();
-        for (const auto &s: m_backlog) {
-            std::cout << s << std::endl;
-            if (m_gui)
-                m_module->sendText(message::SendText::Cerr, s);
-        }
-        m_backlog.clear();
-    }
-
-    void flush(ssize_t count = -1)
-    {
-        std::unique_lock<std::recursive_mutex> scoped_lock(m_mutex);
-        size_t size = count < 0 ? m_buf.size() : count;
-        if (size > 0) {
-            std::string msg(m_buf.data(), size);
-            m_backlog.push_back(msg);
-            if (m_backlog.size() > BacklogSize)
-                m_backlog.pop_front();
-            if (m_gui)
-                m_module->sendText(message::SendText::Cerr, msg);
-            if (m_console)
-                std::cout << msg << std::flush;
-        }
-
-        if (size == m_buf.size()) {
-            m_buf.clear();
-        } else {
-            m_buf.erase(m_buf.begin(), m_buf.begin() + size);
-        }
-    }
-
-    int overflow(int ch)
-    {
-        std::unique_lock<std::recursive_mutex> scoped_lock(m_mutex);
-        if (ch != EOF) {
-            m_buf.push_back(ch);
-            if (ch == '\n')
-                flush();
-            return 0;
-        } else {
-            return EOF;
-        }
-    }
-
-    std::streamsize xsputn(const CharT *s, std::streamsize num)
-    {
-        std::unique_lock<std::recursive_mutex> scoped_lock(m_mutex);
-        size_t end = m_buf.size();
-        m_buf.resize(end + num);
-        memcpy(m_buf.data() + end, s, num);
-        auto it = std::find(m_buf.rbegin(), m_buf.rend(), '\n');
-        if (it != m_buf.rend()) {
-            flush(it - m_buf.rend());
-        }
-        return num;
-    }
-
-    void set_console_output(bool enable) { m_console = enable; }
-
-    void set_gui_output(bool enable) { m_gui = enable; }
-
-    void clear_backlog()
-    {
-        std::unique_lock<std::recursive_mutex> scoped_lock(m_mutex);
-        m_backlog.clear();
-    }
-
-private:
-    const size_t BacklogSize = 10;
-    Module *m_module;
-    std::vector<char> m_buf;
-    std::recursive_mutex m_mutex;
-    bool m_console, m_gui;
-    std::deque<std::string> m_backlog;
-};
-#endif
-
 template<typename Retval>
 Retval get(Object::const_ptr obj, Retval (vistle::Object::*func)() const)
 {
@@ -310,8 +223,6 @@ Module::Module(const std::string &moduleName, const int moduleId, mpi::communica
 , m_defaultCacheMode(ObjectCache::CacheByName)
 , m_prioritizeVisible(true)
 , m_syncMessageProcessing(false)
-, m_origStreambuf(nullptr)
-, m_streambuf(nullptr)
 , m_traceMessages(message::INVALID)
 , m_benchmark(false)
 , m_avgComputeTime(0.)
@@ -364,25 +275,9 @@ Module::Module(const std::string &moduleName, const int moduleId, mpi::communica
     addIntParameter("_prioritize_visible", "prioritize currently visible timestep", m_prioritizeVisible,
                     Parameter::Boolean);
 
-    addVectorParameter("_position", "position in GUI", ParamVector(0., 0.));
-    auto layer = addIntParameter("_layer", "layer in GUI", Integer(0));
-    setParameterMinimum(layer, Integer(-1));
-
-    auto em = addIntParameter("_error_output_mode", "where stderr is shown", size() == 1 ? 1 : 1, Parameter::Choice);
-    std::vector<std::string> errmodes;
-    errmodes.push_back("No output");
-    errmodes.push_back("Console only");
-    errmodes.push_back("GUI");
-    errmodes.push_back("Console & GUI");
-    setParameterChoices(em, errmodes);
-
     auto validate = addIntParameter("_validate_objects", "validate data objects before sending to port",
                                     m_validateObjects, Parameter::Choice);
     V_ENUM_SET_CHOICES(validate, ObjectValidation);
-
-
-    auto outrank = addIntParameter("_error_output_rank", "rank from which to show stderr (-1: all ranks)", -1);
-    setParameterRange<Integer>(outrank, -1, size() - 1);
 
     auto openmp_threads = addIntParameter("_openmp_threads", "number of OpenMP threads (0: system default)", 0);
     setParameterRange<Integer>(openmp_threads, 0, 4096);
@@ -453,13 +348,6 @@ const HubData &Module::getHub() const
 
 void Module::initDone()
 {
-#ifndef MODULE_THREAD
-#ifdef REDIRECT_OUTPUT
-    m_streambuf = new msgstreambuf<char>(this);
-    m_origStreambuf = std::cerr.rdbuf(m_streambuf);
-#endif
-#endif
-
     message::Started start(name());
     start.setPid(getpid());
     start.setDestId(Id::ForBroadcast);
@@ -588,6 +476,9 @@ Port *Module::createInputPort(const std::string &name, const std::string &descri
         return nullptr;
     }
 
+    m_portNumber[name] = m_portCounter;
+    ++m_portCounter;
+
     auto itp = inputPorts.emplace(name, Port(id(), name, Port::INPUT, flags));
     auto &p = itp.first->second;
     p.setDescription(description);
@@ -605,6 +496,9 @@ Port *Module::createOutputPort(const std::string &name, const std::string &descr
         CERR << "createOutputPort: already have port/parameter with name " << name << std::endl;
         return nullptr;
     }
+
+    m_portNumber[name] = m_portCounter;
+    ++m_portCounter;
 
     auto itp = outputPorts.emplace(name, Port(id(), name, Port::OUTPUT, flags));
     auto &p = itp.first->second;
@@ -687,6 +581,9 @@ const Port *Module::findOutputPort(const std::string &name) const
 
 Parameter *Module::addParameterGeneric(const std::string &name, std::shared_ptr<Parameter> param)
 {
+    m_portNumber[name] = m_portCounter;
+    ++m_portCounter;
+
     assert(!havePort(name));
     if (havePort(name)) {
         CERR << "addParameterGeneric: already have port/parameter with name " << name << std::endl;
@@ -769,25 +666,27 @@ bool Module::broadcastObject(const mpi::communicator &comm, Object::const_ptr &o
 
     if (comm.rank() == root) {
         assert(obj->check(std::cerr));
-        vecostreambuf<buffer> memstr;
-        vistle::oarchive memar(memstr);
+        vecostreambuf<buffer> objstr;
+        vistle::oarchive objar(objstr);
         auto saver = std::make_shared<DeepArchiveSaver>();
-        memar.setSaver(saver);
-        obj->saveObject(memar);
-        const buffer &mem = memstr.get_vector();
-        mpi::broadcast(comm, const_cast<buffer &>(mem), root);
+        objar.setSaver(saver);
+        obj->saveObject(objar);
+        const buffer &objbuf = objstr.get_vector();
+        mpi::broadcast(comm, const_cast<buffer &>(objbuf), root);
+
         auto dir = saver->getDirectory();
         mpi::broadcast(comm, dir, root);
         for (auto &ent: dir) {
             bigmpi::broadcast(comm, ent.data, ent.size, root);
         }
     } else {
-        buffer mem;
-        mpi::broadcast(comm, mem, root);
+        buffer objbuf;
+        mpi::broadcast(comm, objbuf, root);
         vistle::SubArchiveDirectory dir;
         std::map<std::string, buffer> objects, arrays;
         std::map<std::string, message::CompressionMode> comp;
         std::map<std::string, size_t> rawsizes;
+
         mpi::broadcast(comm, dir, root);
         for (auto &ent: dir) {
             if (ent.is_array) {
@@ -799,12 +698,13 @@ bool Module::broadcastObject(const mpi::communicator &comm, Object::const_ptr &o
             }
             bigmpi::broadcast(comm, ent.data, ent.size, root);
         }
-        vecistreambuf<buffer> membuf(mem);
-        vistle::iarchive memar(membuf);
+
+        vecistreambuf<buffer> objstr(objbuf);
+        vistle::iarchive objar(objstr);
         auto fetcher = std::make_shared<DeepArchiveFetcher>(objects, arrays, comp, rawsizes);
-        memar.setFetcher(fetcher);
+        objar.setFetcher(fetcher);
         //std::cerr << "DeepArchiveFetcher: " << *fetcher << std::endl;
-        obj.reset(Object::loadObject(memar));
+        obj.reset(Object::loadObject(objar));
         obj->refresh();
         //std::cerr << "broadcastObject recv " << obj->getName() << ": refcount=" << obj->refcount() << std::endl;
         assert(obj->check(std::cerr));
@@ -941,28 +841,6 @@ void Module::updateCacheMode()
     setCacheMode(ObjectCache::CacheMode(value), false);
 }
 
-void Module::updateOutputMode()
-{
-#ifndef MODULE_THREAD
-#ifdef REDIRECT_OUTPUT
-    const Integer r = getIntParameter("_error_output_rank");
-    const Integer m = getIntParameter("_error_output_mode");
-
-    auto sbuf = dynamic_cast<msgstreambuf<char> *>(m_streambuf);
-    if (!sbuf)
-        return;
-
-    if (r == -1 || r == rank()) {
-        sbuf->set_console_output(m & 1);
-        sbuf->set_gui_output(m & 2);
-    } else {
-        sbuf->set_console_output(false);
-        sbuf->set_gui_output(false);
-    }
-#endif
-#endif
-}
-
 void Module::waitAllTasks()
 {
     while (!m_tasks.empty()) {
@@ -981,7 +859,7 @@ void Module::updateMeta(vistle::Object::ptr obj) const
         return;
 
     {
-        std::lock_guard guard(obj->mutex());
+        std::lock_guard guard(obj->objectMutex());
         obj->setCreator(id());
         obj->setGeneration(m_generation + m_cache.generation());
         if (m_iteration >= 0) {
@@ -995,7 +873,7 @@ void Module::updateMeta(vistle::Object::ptr obj) const
     // update referenced objects, if not yet valid
     auto refs = obj->referencedObjects();
     for (auto &ref: refs) {
-        std::lock_guard guard(ref->mutex());
+        std::lock_guard guard(ref->objectMutex());
         if (ref->getCreator() == -1) {
             auto o = std::const_pointer_cast<Object>(ref);
             o->setCreator(id());
@@ -1010,21 +888,25 @@ void Module::updateMeta(vistle::Object::ptr obj) const
     }
 }
 
-void Module::setItemInfo(const std::string &text, const std::string &port)
+void Module::setItemInfo(const std::string &text, const std::string &port, message::ItemInfo::InfoType type)
 {
+    using message::ItemInfo;
     if (rank() != 0)
         return;
-    auto &old = m_currentItemInfo[port];
+    if (type == ItemInfo::Unspecified) {
+        type = port.empty() ? ItemInfo::Module : ItemInfo::Port;
+    }
+    InfoKey key(port, type);
+    auto &old = m_currentItemInfo[key];
     if (old != text) {
-        using message::ItemInfo;
-        ItemInfo info(port.empty() ? ItemInfo::Module : ItemInfo::Port, port);
+        ItemInfo info(type, port);
         ItemInfo::Payload pl(text);
         sendMessageWithPayload(info, pl);
         old = text;
     }
 }
 
-bool Module::addObject(const std::string &portName, vistle::Object::ptr object)
+bool Module::addObject(const std::string &portName, vistle::Object::const_ptr object)
 {
     auto *p = findOutputPort(portName);
     if (!p) {
@@ -1034,26 +916,10 @@ bool Module::addObject(const std::string &portName, vistle::Object::ptr object)
     return addObject(p, object);
 }
 
-bool Module::addObject(Port *port, vistle::Object::ptr object)
+bool Module::addObject(Port *port, vistle::Object::const_ptr object)
 {
     assert(!object || object->getCreator() == id());
 
-    vistle::Object::const_ptr cobj = object;
-    return passThroughObject(port, cobj);
-}
-
-bool Module::passThroughObject(const std::string &portName, vistle::Object::const_ptr object)
-{
-    auto *p = findOutputPort(portName);
-    if (!p) {
-        CERR << "Module::passThroughObject: output port " << portName << " not found" << std::endl;
-    }
-    assert(p);
-    return passThroughObject(p, object);
-}
-
-bool Module::passThroughObject(Port *port, vistle::Object::const_ptr object)
-{
     if (!object)
         return false;
 
@@ -1076,19 +942,29 @@ bool Module::passThroughObject(Port *port, vistle::Object::const_ptr object)
     sendMessage(message);
 
     std::string info;
-    std::string species = object->getAttribute("_species");
+    std::string species = object->getAttribute(attribute::Species);
+    std::string mapped, geometry, mapping;
     if (!species.empty()) {
         info += species + " - ";
     }
     std::string type = Object::toString(object->getType());
     info += type;
     if (auto d = DataBase::as(object)) {
+        mapped = type;
+        mapping = DataBase::toString(d->guessMapping());
         if (auto g = d->grid()) {
             info += " on ";
-            info += Object::toString(g->getType());
+            geometry = Object::toString(g->getType());
+            info += geometry;
         }
     }
-    setItemInfo(info, port->getName());
+    const std::string pname = port->getName();
+    setItemInfo(info, pname, message::ItemInfo::Port);
+    setItemInfo(type, pname, message::ItemInfo::PortType);
+    setItemInfo(species, pname, message::ItemInfo::PortSpecies);
+    setItemInfo(mapped, pname, message::ItemInfo::PortMapped);
+    setItemInfo(geometry, pname, message::ItemInfo::PortGeometry);
+    setItemInfo(mapping, pname, message::ItemInfo::PortMapping);
     return true;
 }
 
@@ -1238,9 +1114,17 @@ bool Module::addInputObject(int sender, const std::string &senderPort, const std
 
     assert(object->check(std::cerr));
 
-    if (object->hasAttribute("_species")) {
-        std::string species = object->getAttribute("_species");
-        if (m_inputSpecies != species) {
+    if (object->hasAttribute(attribute::Species)) {
+        std::string species = object->getAttribute(attribute::Species);
+        int portNum = -1;
+        auto it = m_portNumber.find(portName);
+        if (it != m_portNumber.end()) {
+            portNum = it->second;
+        }
+        if (m_inputSpecies.empty() || (portNum >= 0 && portNum <= m_inputSpeciesPort && m_inputSpecies != species)) {
+            if (portNum >= 0) {
+                m_inputSpeciesPort = portNum;
+            }
             m_inputSpecies = species;
             setInputSpecies(m_inputSpecies);
         }
@@ -1282,9 +1166,7 @@ bool Module::changeParameter(const Parameter *p)
 {
     std::string name = p->getName();
     if (!name.empty() && name[0] == '_') {
-        if (name == "_error_output_mode" || name == "_error_output_rank") {
-            updateOutputMode();
-        } else if (name == "_cache_mode") {
+        if (name == "_cache_mode") {
             updateCacheMode();
         } else if (name == "_openmp_threads") {
             setOpenmpThreads((int)getIntParameter(name), false);
@@ -1498,12 +1380,15 @@ bool Module::dispatch(bool block, bool *messageReceived, unsigned int minPrio)
         Shm::the().setRemoveOnDetach();
         throw(e);
     } catch (vistle::exception &e) {
-        std::cerr << "Vistle exception in module " << name() << ": " << e.what() << e.where() << std::endl;
+        std::cerr << "Vistle exception in module " << name() << ": " << e.what() << "\n" << e.where() << std::endl;
+        sendError("terminating with Vistle exception: %s", e.what());
         throw(e);
     } catch (std::exception &e) {
         std::cerr << "exception in module " << name() << ": " << e.what() << std::endl;
+        sendError("terminating with exception: %s", e.what());
         throw(e);
     } catch (...) {
+        sendError("terminating with unknown exception");
         std::cerr << "unknown exception in module " << name() << std::endl;
         throw;
     }
@@ -1590,14 +1475,16 @@ bool Module::handleMessage(const vistle::message::Message *message, const Messag
     switch (message->type()) {
     case vistle::message::TRACE: {
         const Trace *trace = static_cast<const Trace *>(message);
-        if (trace->on()) {
-            m_traceMessages = trace->messageType();
-        } else {
-            m_traceMessages = message::INVALID;
-        }
+        if (trace->destId() == id() || trace->destId() == message::Id::Broadcast) {
+            if (trace->on()) {
+                m_traceMessages = trace->messageType();
+            } else {
+                m_traceMessages = message::INVALID;
+            }
 
-        std::cerr << "    module [" << name() << "] [" << id() << "] [" << rank() << "/" << size() << "] trace ["
-                  << trace->on() << "]" << std::endl;
+            std::cerr << "    module [" << name() << "] [" << id() << "] [" << rank() << "/" << size() << "] trace ["
+                      << trace->on() << "]" << std::endl;
+        }
         break;
     }
 
@@ -1605,10 +1492,6 @@ bool Module::handleMessage(const vistle::message::Message *message, const Messag
         const message::Quit *quit = static_cast<const message::Quit *>(message);
         //TODO: uuid should be included in corresponding ModuleExit message
         (void)quit;
-#ifdef REDIRECT_OUTPUT
-        if (auto sbuf = dynamic_cast<msgstreambuf<char> *>(m_streambuf))
-            sbuf->clear_backlog();
-#endif
         return false;
         break;
     }
@@ -1617,10 +1500,6 @@ bool Module::handleMessage(const vistle::message::Message *message, const Messag
         const message::Kill *kill = static_cast<const message::Kill *>(message);
         //TODO: uuid should be included in corresponding ModuleExit message
         if (kill->getModule() == id() || kill->getModule() == message::Id::Broadcast) {
-#ifdef REDIRECT_OUTPUT
-            if (auto sbuf = dynamic_cast<msgstreambuf<char> *>(m_streambuf))
-                sbuf->clear_backlog();
-#endif
             return false;
         } else {
             std::cerr << "module [" << name() << "] [" << id() << "] [" << rank() << "/" << size() << "]"
@@ -1716,10 +1595,12 @@ bool Module::handleMessage(const vistle::message::Message *message, const Messag
         if (ports && port && other) {
             if (ports->find(other) == ports->end()) {
                 added = port->addConnection(other);
-                if (inputConnection)
+                if (inputConnection) {
                     connectionAdded(other, port);
-                else
+                    m_cache.addPort(port->getName());
+                } else {
                     connectionAdded(port, other);
+                }
             }
         } else {
             if (!findParameter(ownPortName))
@@ -1756,7 +1637,7 @@ bool Module::handleMessage(const vistle::message::Message *message, const Messag
         if (ports && port && other) {
             if (inputConnection) {
                 connectionRemoved(other, port);
-                m_cache.clear(port->getName());
+                m_cache.removePort(port->getName());
             } else {
                 connectionRemoved(port, other);
             }
@@ -1848,6 +1729,7 @@ bool Module::handleMessage(const vistle::message::Message *message, const Messag
 
     case message::MODULEEXIT:
     case message::SPAWN:
+    case message::SETNAME:
     case message::STARTED:
     case message::MODULEAVAILABLE:
     case message::REPLAYFINISHED:
@@ -1937,16 +1819,16 @@ bool Module::handleExecute(const vistle::message::Execute *exec)
             // Compute not triggered by adding an object, get objects from cache and determine no. of objects to process
             numObject = 0;
 
+            auto cache = m_cache.getObjects();
+            cache.second = mpi::all_reduce(comm(), cache.second, std::logical_and<bool>());
+            if (!cache.second)
+                cache.first.clear();
             for (auto &port: inputPorts) {
                 ObjectList received;
                 std::swap(received, port.second.objects());
                 if (!isConnected(port.second))
                     continue;
-                auto cache = m_cache.getObjects(port.first);
-                cache.second = mpi::all_reduce(comm(), cache.second, std::logical_and<bool>());
-                if (!cache.second)
-                    cache.first.clear();
-                port.second.objects() = cache.first;
+                port.second.objects() = cache.first[port.first];
                 received.clear();
                 auto srcPort = *port.second.connections().begin();
                 for (const auto &o: port.second.objects()) {
@@ -2103,6 +1985,13 @@ bool Module::handleExecute(const vistle::message::Execute *exec)
                 if (reordered) {
                     const int step = direction < 0 ? -1 : 1;
                     // add objects to port queue in processing order
+                    auto cache = m_cache.getObjects();
+                    cache.second = mpi::all_reduce(comm(), cache.second, std::logical_and<bool>());
+                    if (!cache.second) {
+                        // FIXME: should collectively ignore cache
+                        CERR << "failed to retrieve objects from input cache" << std::endl;
+                        cache.first.clear();
+                    }
                     for (auto &port: inputPorts) {
                         if (port.second.flags() & Port::NOCOMPUTE)
                             continue;
@@ -2110,13 +1999,7 @@ bool Module::handleExecute(const vistle::message::Execute *exec)
                         std::swap(received, port.second.objects());
                         if (!isConnected(port.second))
                             continue;
-                        auto cache = m_cache.getObjects(port.first);
-                        if (!cache.second) {
-                            // FIXME: should collectively ignore cache
-                            CERR << "failed to retrieve objects from input cache" << std::endl;
-                            cache.first.clear();
-                        }
-                        auto objs = cache.first;
+                        auto objs = cache.first[port.first];
                         received.clear();
                         // objects without timestep
                         ssize_t cur = step < 0 ? numObject - 1 : 0;
@@ -2438,19 +2321,13 @@ Module::~Module()
         CERR << "Emergency quit" << std::endl;
     }
 
-    vistle::message::ModuleExit m;
-    m.setDestId(Id::ForBroadcast);
+    vistle::message::ModuleExit m(!m_readyForQuit);
     sendMessage(m);
 
     delete sendMessageQueue;
     sendMessageQueue = nullptr;
     delete receiveMessageQueue;
     receiveMessageQueue = nullptr;
-
-    if (m_origStreambuf)
-        std::cerr.rdbuf(m_origStreambuf);
-    delete m_streambuf;
-    m_streambuf = nullptr;
 }
 
 void Module::eventLoop()
@@ -2960,13 +2837,13 @@ void BlockTask::addDependency(std::shared_ptr<BlockTask> dep)
     m_dependencies.insert(dep);
 }
 
-void BlockTask::addObject(Port *port, Object::ptr obj)
+void BlockTask::addObject(Port *port, Object::const_ptr obj)
 {
     assert(m_ports.find(port) != m_ports.end());
     m_objects[port].emplace_back(obj);
 }
 
-void BlockTask::addObject(const std::string &port, Object::ptr obj)
+void BlockTask::addObject(const std::string &port, Object::const_ptr obj)
 {
     auto it = m_portsByString.find(port);
     assert(it != m_portsByString.end());

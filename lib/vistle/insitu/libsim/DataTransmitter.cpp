@@ -282,7 +282,7 @@ vistle::Object::ptr DataTransmitter::makeVariable(const VariableInfo &varInfo, i
                                   varInfo.meshInfo.grids[iteration], varInfo.mapping);
         return var;
     } else {
-        auto var = make_ptr<vistle::Vec<vistle::Scalar, 1>>((Index)varArray.size);
+        auto var = std::make_shared<vistle::Vec<vistle::Scalar, 1>>((Index)varArray.size);
         transformArray(varArray, var->x().data());
         var->setMapping(varInfo.mapping);
         var->setGrid(varInfo.meshInfo.grids[iteration]);
@@ -293,7 +293,7 @@ vistle::Object::ptr DataTransmitter::makeVariable(const VariableInfo &varInfo, i
 void DataTransmitter::sendVarableToModule(vistle::Object::ptr variable, int block, const char *name)
 {
     variable->setBlock(block);
-    variable->addAttribute("_species", name);
+    variable->addAttribute(attribute::Species, name);
     m_sender.addObject(name, variable);
 }
 

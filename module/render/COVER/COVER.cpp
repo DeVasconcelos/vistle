@@ -1,6 +1,7 @@
 #include <future>
 #include <boost/algorithm/string/predicate.hpp>
-
+#include <boost/mpi.hpp>
+#include <boost/serialization/map.hpp>
 // cover
 #include <net/message.h>
 #include <cover/coVRPluginSupport.h>
@@ -16,6 +17,7 @@
 #include <vistle/core/messages.h>
 #include <vistle/core/object.h>
 #include <vistle/core/placeholder.h>
+#include <vistle/core/statetracker.h>
 #include <vistle/util/threadname.h>
 
 #include <osg/Node>
@@ -67,9 +69,9 @@ using namespace vistle;
 COVER *COVER::s_instance = nullptr;
 
 
-COVER::DelayedObject::DelayedObject(std::shared_ptr<PluginRenderObject> ro, VistleGeometryGenerator generator)
-: ro(ro)
-, name(ro->container ? ro->container->getName() : "(no container)")
+COVER::DelayedObject::DelayedObject(std::shared_ptr<PluginRenderObject> pro, VistleGeometryGenerator generator)
+: pro(pro)
+, name(pro->container ? pro->container->getName() : "(no container)")
 , generator(generator)
 , node_future(std::async(std::launch::async, [this]() {
     setThreadName("COVER:Geom:" + name);
@@ -217,6 +219,9 @@ COVER::COVER(const std::string &name, int moduleId, mpi::communicator comm): vis
     } else {
         m_config.reset(
             new opencover::config::Access(configAccess()->hostname(), configAccess()->cluster(), comm.rank()));
+        if (auto covisedir = getenv("COVISEDIR")) {
+            m_config->setPrefix(covisedir);
+        }
     }
     m_coverConfigBridge.reset(new CoverConfigBridge(this));
     m_config->setWorkspaceBridge(m_coverConfigBridge.get());
@@ -302,6 +307,8 @@ bool COVER::parameterAdded(const int senderId, const std::string &name, const me
 
         m_interactorMap[senderId] = new VistleInteractor(this, moduleName, senderId);
         m_interactorMap[senderId]->setPluginName(plugin);
+        auto dn = this->state().getModuleDisplayName(senderId);
+        m_interactorMap[senderId]->setDisplayName(dn);
         it = m_interactorMap.find(senderId);
         std::cerr << "created interactor for " << moduleName << ":" << senderId << std::endl;
         auto inter = it->second;
@@ -531,7 +538,7 @@ std::shared_ptr<vistle::RenderObject> COVER::addObject(int senderId, const std::
     for (const auto &obj: {container, geometry, normals, texture}) {
         if (!obj)
             continue;
-        std::string plugin = obj->getAttribute("_plugin");
+        std::string plugin = obj->getAttribute(attribute::Plugin);
         if (!plugin.empty())
             cover->addPlugin(plugin.c_str());
     }
@@ -579,7 +586,7 @@ std::shared_ptr<vistle::RenderObject> COVER::addObject(int senderId, const std::
     if (geometry) {
         transform = makeTransform(geometry);
 
-        const char *filename = pro->coverRenderObject->getAttribute("_model_file");
+        const char *filename = pro->coverRenderObject->getAttribute(attribute::ModelFile);
         if (filename) {
             osg::Node *filenode = nullptr;
             if (!pro->coverRenderObject->isPlaceHolder()) {
@@ -655,29 +662,29 @@ bool COVER::render()
     //std::cerr << "adding " << numAdd << " delayed objects, " << m_delayedObjects.size() << " waiting" << std::endl;
     for (int i = 0; i < numAdd; ++i) {
         auto &node_future = m_delayedObjects.front().node_future;
-        auto &ro = m_delayedObjects.front().ro;
+        auto &pro = m_delayedObjects.front().pro;
         osg::Geode *geode = node_future.get();
-        if (ro->coverRenderObject && geode) {
-            int creatorId = ro->coverRenderObject->getCreator();
+        if (pro->coverRenderObject && geode) {
+            int creatorId = pro->coverRenderObject->getCreator();
             Creator &creator = getCreator(creatorId);
 
             auto tr = m_delayedObjects.front().transform;
             geode->setNodeMask(~(opencover::Isect::Update | opencover::Isect::Intersection));
-            geode->setName(ro->coverRenderObject->getName());
+            geode->setName(pro->coverRenderObject->getName());
             tr->addChild(geode);
-            ro->coverRenderObject->setNode(tr);
-            const std::string variant = ro->variant;
-            const int t = ro->timestep;
+            pro->coverRenderObject->setNode(tr);
+            const std::string variant = pro->variant;
+            const int t = pro->timestep;
             if (t >= 0) {
                 coVRAnimationManager::instance()->addSequence(creator.animated(variant));
             }
-            osg::ref_ptr<osg::Group> parent = getParent(ro->coverRenderObject.get());
+            osg::ref_ptr<osg::Group> parent = getParent(pro->coverRenderObject.get());
             parent->addChild(tr);
-        } else if (!ro->coverRenderObject) {
+        } else if (!pro->coverRenderObject) {
             std::cerr << rank() << ": discarding delayed object " << m_delayedObjects.front().name
                       << " - already deleted" << std::endl;
         } else if (!geode) {
-            //std::cerr << rank() << ": discarding delayed object " << ro->coverRenderObject->getName() << ": no node created" << std::endl;
+            //std::cerr << rank() << ": discarding delayed object " << pro->coverRenderObject->getName() << ": no node created" << std::endl;
         }
         m_delayedObjects.pop_front();
     }
@@ -702,11 +709,11 @@ bool COVER::addColorMap(const std::string &species, Object::const_ptr colormap)
                              const_cast<unsigned char *>(&texture->pixels()[0]), osg::Image::NO_DELETE);
         cmap.image->dirty();
 
-        cmap.setBlendWithMaterial(texture->hasAttribute("_blend_with_material"));
+        cmap.setBlendWithMaterial(texture->hasAttribute(attribute::BlendWithMaterial));
         VistleGeometryGenerator::unlock();
     }
 
-    std::string plugin = colormap->getAttribute("_plugin");
+    std::string plugin = colormap->getAttribute(attribute::Plugin);
     if (!plugin.empty())
         cover->addPlugin(plugin.c_str());
 
@@ -731,7 +738,7 @@ bool COVER::addColorMap(const std::string &species, Object::const_ptr colormap)
         return true;
     }
 
-    auto att = colormap->getAttribute("_colormap");
+    auto att = colormap->getAttribute(attribute::ColorMap);
     if (att.empty()) {
         ro->removeAttribute("COLORMAP");
     } else {
@@ -790,59 +797,27 @@ std::map<std::string, std::string> COVER::setupEnv(const std::string &bindir)
     std::map<std::string, std::string> env;
     std::map<std::string, bool> envToSet;
     if (rank == 0) {
-        std::vector<std::string> envvars;
-        // system
-        envvars.push_back("PATH");
-        envvars.push_back("LD_LIBRARY_PATH");
-        envvars.push_back("LD_PRELOAD");
-        envvars.push_back("DYLD_LIBRARY_PATH");
-        envvars.push_back("DYLD_FRAMEWORK_PATH");
-        envvars.push_back("DYLD_FALLBACK_LIBRARY_PATH");
-        envvars.push_back("DYLD_FALLBACK_FRAMEWORK_PATH");
-        envvars.push_back("LANG");
-        envvars.push_back("LC_CTYPE");
-        envvars.push_back("LC_NUMERIC");
-        envvars.push_back("LC_TIME");
-        envvars.push_back("LC_COLLATE");
-        envvars.push_back("LC_MONETARY");
-        envvars.push_back("LC_MESSAGES");
-        envvars.push_back("LC_PAPER");
-        envvars.push_back("LC_NAME");
-        envvars.push_back("LC_ADDRESS");
-        envvars.push_back("LC_TELEPHONE");
-        envvars.push_back("LC_MEASUREMENT");
-        envvars.push_back("LC_IDENTIFICATION");
-        envvars.push_back("LC_ALL");
+        constexpr std::array<const char *, 41> envvars = {
+            // system
+            "PATH", "LD_LIBRARY_PATH", "LD_PRELOAD", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+            "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH", "LANG", "LC_CTYPE", "LC_NUMERIC", "LC_TIME",
+            "LC_COLLATE", "LC_MONETARY", "LC_MESSAGES", "LC_PAPER", "LC_NAME", "LC_ADDRESS", "LC_TELEPHONE",
+            "LC_MEASUREMENT", "LC_IDENTIFICATION", "LC_ALL", "CONFIG_DEBUG", "COCONFIG", "COCONFIG_LOCAL",
+            // covconfig
+            "COCONFIG_DEBUG",
+            // covise config
+            "COCONFIG_DIR", "COCONFIG_SCHEMA", "COVISE_CONFIG",
+            // cover
+            "COVER_PLUGINS", "COVER_TABLETPC",
+            // "COVISE_HOST",
+            "COVISE_SG_DEBUG", "COVISEDIR", "COVISE_PATH", "ARCHSUFFIX",
+            // OpenSceneGraph
+            "OSGFILEPATH", "OSG_FILE_PATH", "OSG_NOTIFY_LEVEL", "OSG_LIBRARY_PATH", "OSG_LD_LIBRARY_PATH",
+            // Qt
+            "QT_AUTO_SCREEN_SCALE_FACTOR", "QT_SCREEN_SCALE_FACTORS"};
 
-        // covconfig
-        envvars.push_back("CONFIG_DEBUG");
-
-        // covise config
-        envvars.push_back("COCONFIG");
-        envvars.push_back("COCONFIG_LOCAL");
-        envvars.push_back("COCONFIG_DEBUG");
-        envvars.push_back("COCONFIG_DIR");
-        envvars.push_back("COCONFIG_SCHEMA");
-        envvars.push_back("COVISE_CONFIG");
-        // cover
-        envvars.push_back("COVER_PLUGINS");
-        envvars.push_back("COVER_TABLETPC");
-        envvars.push_back("COVISE_SG_DEBUG");
-        //envvars.push_back("COVISE_HOST");
-        envvars.push_back("COVISEDIR");
-        envvars.push_back("COVISE_PATH");
-        envvars.push_back("ARCHSUFFIX");
-        // OpenSceneGraph
-        envvars.push_back("OSGFILEPATH");
-        envvars.push_back("OSG_FILE_PATH");
-        envvars.push_back("OSG_NOTIFY_LEVEL");
-        envvars.push_back("OSG_LIBRARY_PATH");
-        envvars.push_back("OSG_LD_LIBRARY_PATH");
-        // Qt
-        envvars.push_back("QT_AUTO_SCREEN_SCALE_FACTOR");
-        envvars.push_back("QT_SCREEN_SCALE_FACTORS");
         for (const auto &v: envvars) {
-            const char *val = getenv(v.c_str());
+            const char *val = getenv(v);
             if (val)
                 env[v] = val;
         }
@@ -850,13 +825,21 @@ std::map<std::string, std::string> COVER::setupEnv(const std::string &bindir)
         std::string covisedir = env["COVISEDIR"];
         std::string archsuffix = env["ARCHSUFFIX"];
 
-        if (covisedir.empty()) {
-            std::string print_covise_env = "print_covise_env";
+        std::string print_covise_env = "print_covise_env";
 #ifdef _WIN32
-            print_covise_env += ".bat";
+        print_covise_env += ".bat";
 #endif
-            if (FILE *fp = popen(print_covise_env.c_str(), "r")) {
-                std::vector<char> buf(10000);
+        std::vector<std::string> cmds;
+        if (covisedir.empty()) {
+            cmds.push_back(print_covise_env);
+        }
+        if (archsuffix.empty()) {
+            cmds.push_back(covisedir + "/bin/" + print_covise_env);
+        }
+
+        for (auto &cmd: cmds) {
+            if (FILE *fp = popen(cmd.c_str(), "r")) {
+                std::vector<char> buf(100000);
                 while (fgets(buf.data(), buf.size(), fp)) {
                     auto sep = std::find(buf.begin(), buf.end(), '=');
                     if (sep != buf.end()) {
@@ -866,11 +849,19 @@ std::map<std::string, std::string> COVER::setupEnv(const std::string &bindir)
                         std::string val = std::string(sep, end);
                         //std::cerr << name << "=" << val << std::endl;
                         env[name] = val;
+                        if (name == "COVISEDIR") {
+                            covisedir = val;
+                        } else if (name == "ARCHSUFFIX") {
+                            archsuffix = val;
+                        }
                     }
                     //ld_library_path = buf.data();
                     //std::cerr << "read ld_lib: " << ld_library_path << std::endl;
                 }
                 pclose(fp);
+                if (!covisedir.empty() && !archsuffix.empty()) {
+                    break;
+                }
             }
         }
     }
@@ -878,43 +869,9 @@ std::map<std::string, std::string> COVER::setupEnv(const std::string &bindir)
     std::string vistleplugin = "Vistle";
     env["VISTLE_PLUGIN"] = vistleplugin;
 
-    std::string ldpath, dyldpath, dyldfwpath, covisepath;
-
-    int numvars = env.size();
-    MPI_Bcast(&numvars, 1, MPI_INT, 0, (MPI_Comm)comm());
-    auto it = env.begin();
-    for (int i = 0; i < numvars; ++i) {
-        std::string name;
-        std::string value;
-        if (rank == 0) {
-            name = it->first;
-            value = it->second;
-        }
-
-        auto sync_string = [this, rank](std::string &s) {
-            std::vector<char> buf;
-            int len = -1;
-            if (rank == 0)
-                len = s.length() + 1;
-            MPI_Bcast(&len, 1, MPI_INT, 0, (MPI_Comm)comm());
-            buf.resize(len);
-            if (rank == 0)
-                strcpy(buf.data(), s.c_str());
-            MPI_Bcast(buf.data(), buf.size(), MPI_BYTE, 0, (MPI_Comm)comm());
-            s = buf.data();
-        };
-        sync_string(name);
-        sync_string(value);
-
-        setenv(name.c_str(), value.c_str(), 1 /* overwrite */);
-
-        if (rank == 0)
-            ++it;
-        else
-            env[name] = value;
-
-        //std::cerr << name << " -> " << value << std::endl;
-    }
+    mpi::broadcast(comm(), env, 0);
+    for (const auto &v: env)
+        setenv(v.first.c_str(), v.second.c_str(), 1 /* overwrite */);
 
     return env;
 }
@@ -939,24 +896,19 @@ int COVER::runMain(int argc, char *argv[])
     for (const auto &libdir: libpath) {
         std::string abslib = libdir + "/" + libcover;
         const char mainname[] = "mpi_main";
-#ifdef WIN32
-        handle = LoadLibraryA(abslib.c_str());
-#else
-        handle = dlopen(abslib.c_str(), RTLD_LAZY);
-#endif
-
-        if (!handle) {
 #ifdef _WIN32
+        handle = LoadLibraryA(abslib.c_str());
+        if (!handle) {
             std::cerr << "failed to dlopen " << abslib << std::endl;
-#else
-            std::cerr << "failed to dlopen " << abslib << ": " << dlerror() << std::endl;
-#endif
             continue;
         }
-
-#ifdef _WIN32
         mpi_main = (mpi_main_t *)GetProcAddress((HINSTANCE)handle, mainname);
 #else
+        handle = dlopen(abslib.c_str(), RTLD_LAZY);
+        if (!handle) {
+            std::cerr << "failed to dlopen " << abslib << ": " << dlerror() << std::endl;
+            continue;
+        }
         mpi_main = (mpi_main_t *)dlsym(handle, mainname);
 #endif
         if (mpi_main) {
@@ -1037,12 +989,24 @@ bool COVER::handleMessage(const message::Message *message, const MessagePayload 
     }
     case vistle::message::COVER: {
         auto &cmsg = message->as<const message::Cover>();
-        covise::DataHandle dh(const_cast<char *>(payload->data()), payload->size(), false /* do not delete */);
+        covise::DataHandle dh(const_cast<char *>(payload ? payload->data() : nullptr), payload ? payload->size() : 0,
+                              false /* do not delete */);
         covise::Message msg(cmsg.subType(), dh);
         msg.sender = cmsg.sender();
         msg.send_type = cmsg.senderType();
         coVRCommunication::instance()->handleVRB(msg);
         return true;
+    }
+    case vistle::message::SETNAME: {
+        auto ret = Renderer::handleMessage(message, payload);
+        auto &setname = message->as<const message::SetName>();
+        InteractorMap::iterator it = m_interactorMap.find(setname.module());
+        if (it != m_interactorMap.end()) {
+            auto inter = it->second;
+            inter->setDisplayName(setname.name());
+            coVRPluginList::instance()->newInteractor(inter->getObject(), inter);
+        }
+        return ret;
     }
     default:
         break;

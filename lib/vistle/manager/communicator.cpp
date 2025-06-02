@@ -49,7 +49,7 @@ Communicator::Communicator(int r, const std::vector<std::string> &hosts, boost::
 , m_rank(r)
 , m_size(hosts.size())
 , m_recvSize(0)
-, m_hubSocket(m_ioService)
+, m_hubSocket(m_ioContext)
 {
     crypto::initialize();
 
@@ -123,13 +123,18 @@ bool Communicator::connectHub(std::string host, unsigned short port, unsigned sh
         CERR << "connecting to hub on " << host << ":" << port << "..." << std::flush;
     }
 
-    asio::ip::tcp::resolver resolver(m_ioService);
-    asio::ip::tcp::resolver::query query(host, std::to_string(port), asio::ip::tcp::resolver::query::numeric_service);
-    auto ep = resolver.resolve(query);
-    asio::ip::tcp::resolver::query queryd(host, std::to_string(dataPort),
-                                          asio::ip::tcp::resolver::query::numeric_service);
-    m_dataEndpoint = resolver.resolve(queryd);
+    asio::ip::tcp::resolver resolver(m_ioContext);
     boost::system::error_code ec;
+    auto ep = resolver.resolve(host, std::to_string(port), asio::ip::tcp::resolver::numeric_service, ec);
+    if (ec) {
+        CERR << "could not resolve host " << host << ":" << port << ": " << ec.message() << std::endl;
+        return false;
+    }
+    m_dataEndpoint = resolver.resolve(host, std::to_string(dataPort), asio::ip::tcp::resolver::numeric_service, ec);
+    if (ec) {
+        CERR << "could not resolve host " << host << ":" << dataPort << ": " << ec.message() << std::endl;
+        return false;
+    }
 
     int ret = 1;
     if (getRank() == 0) {
@@ -137,7 +142,7 @@ bool Communicator::connectHub(std::string host, unsigned short port, unsigned sh
         if (ec) {
             std::cerr << std::endl;
             CERR << "could not establish connection to hub at " << host << ":" << port << std::endl;
-            ret = 0;
+            ret = false;
         } else {
             std::cerr << " ok." << std::endl;
         }
@@ -194,7 +199,7 @@ bool Communicator::sendHub(const message::Message &message, const MessagePayload
     return forwardToMaster(message, payload);
 }
 
-void Communicator::run()
+bool Communicator::run()
 {
     bool work = false;
     while (dispatch(&work) && !m_terminate) {
@@ -204,6 +209,7 @@ void Communicator::run()
         vistle::adaptive_wait(work, this);
     }
     CERR << "Comm: run done" << std::endl;
+    return true;
 }
 
 bool Communicator::dispatch(bool *work)
@@ -212,7 +218,7 @@ bool Communicator::dispatch(bool *work)
 
     bool received = false;
 
-    std::unique_lock<Communicator> guard(*this);
+    std::unique_lock guard(m_mutex);
 
     // check for new UIs and other network clients
     // handle or broadcast messages received from slaves (rank > 0)
@@ -301,8 +307,8 @@ bool Communicator::dispatch(bool *work)
     }
 
     guard.unlock();
-    m_ioService.poll();
-    guard.lock();
+    m_ioContext.poll();
+    //guard.lock();
 
     if (m_rank == 0) {
         message::Buffer buf;
@@ -331,7 +337,7 @@ bool Communicator::dispatch(bool *work)
         }
     }
 
-    guard.unlock();
+    //guard.unlock();
     if (m_dataManager->dispatch())
         received = true;
     guard.lock();
@@ -381,6 +387,7 @@ void Communicator::terminate()
 
 bool Communicator::startSend(int destRank, const message::Message &message, const MessagePayload &payload)
 {
+    std::lock_guard guard(m_mutex);
     auto p = m_ongoingSends.emplace(new SendRequest(message));
     auto it = p.first;
     auto &sr = **it;
@@ -464,7 +471,7 @@ bool Communicator::broadcastAndHandleMessage(const message::Message &message, co
 
     MessagePayload pl = payload;
     if (m_size > 0) {
-        std::lock_guard<Communicator> guard(*this);
+        std::lock_guard guard(m_mutex);
         std::vector<MPI_Request> s(m_size);
         unsigned int size = buf.size();
         for (int index = 0; index < m_size; ++index) {
@@ -499,7 +506,7 @@ bool Communicator::handleMessage(const message::Buffer &message, const MessagePa
         assert(payload->size() == message.payloadSize());
     }
 
-    std::lock_guard<Communicator> guard(*this);
+    std::lock_guard guard(m_mutex);
 
     if (message.type() == message::SETID) {
         const auto &set = message.as<message::SetId>();

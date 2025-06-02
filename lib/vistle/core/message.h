@@ -1,5 +1,5 @@
-#ifndef VISTLE_MESSAGE_H
-#define VISTLE_MESSAGE_H
+#ifndef VISTLE_CORE_MESSAGE_H
+#define VISTLE_CORE_MESSAGE_H
 
 #include <array>
 #include <cassert>
@@ -82,6 +82,7 @@ DEFINE_ENUM_WITH_STRING_CONVERSIONS(
     (REMOTERENDERING)
     (COVER)
     (INSITU)
+    (SETNAME)
     (NumMessageTypes) // keep last
 )
 V_ENUM_OUTPUT_OP(Type, ::vistle::message)
@@ -106,6 +107,8 @@ struct V_COREEXPORT Id {
     static bool isModule(int id);
     static std::string toString(Reserved id);
     static std::string toString(int id);
+
+    static std::string name(const std::string &desc, int id);
 };
 
 class V_COREEXPORT DefaultSender {

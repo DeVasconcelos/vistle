@@ -1,5 +1,5 @@
-#ifndef VISTLERENDEROBJECT_H
-#define VISTLERENDEROBJECT_H
+#ifndef VISTLE_COVER_VISTLEPLUGINUTIL_VISTLERENDEROBJECT_H
+#define VISTLE_COVER_VISTLEPLUGINUTIL_VISTLERENDEROBJECT_H
 
 #include "export.h"
 
@@ -12,10 +12,6 @@
 #include <osg/Node>
 #include <vistle/renderer/renderobject.h>
 #include <memory>
-
-namespace opencover {
-class coInteractor;
-}
 
 class V_PLUGINUTILEXPORT BaseRenderObject: public opencover::RenderObject {
 public:

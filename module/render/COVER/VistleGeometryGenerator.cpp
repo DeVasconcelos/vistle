@@ -28,15 +28,13 @@
 #include <vistle/core/celltypes.h>
 
 #ifdef COVER_PLUGIN
-//#define BUILD_KDTREES // for faster osg intersection tests
-//#define REINDEX // optimize index order for better GPU vertex cache usage
-
 #include <cover/RenderObject.h>
 #include <cover/VRSceneGraph.h>
 #include <cover/coVRShader.h>
 #include <cover/coVRPluginSupport.h>
 #include <PluginUtil/Tipsify.h>
 
+//#define BUILD_KDTREES // for faster osg intersection tests
 #endif
 
 using namespace vistle;
@@ -59,16 +57,16 @@ std::mutex kdTreeMutex;
 std::vector<osg::ref_ptr<osg::KdTreeBuilder>> kdTreeBuilders;
 #endif
 
+#ifdef COVER_PLUGIN
 std::map<std::string, std::string> get_shader_parameters()
 {
     std::map<std::string, std::string> parammap;
     parammap["dataAttrib"] = std::to_string(DataAttrib);
-#ifdef COVER_PLUGIN
     parammap["texUnit1"] = std::to_string(TfTexUnit);
     parammap["radiusAttrib"] = std::to_string(RadiusAttrib);
-#endif
     return parammap;
 }
+#endif
 
 } // namespace
 
@@ -238,7 +236,7 @@ VistleGeometryGenerator::VistleGeometryGenerator(std::shared_ptr<vistle::RenderO
 : m_ro(ro), m_geo(geo), m_normal(normal), m_mapped(mapped)
 {
     if (m_mapped) {
-        m_species = m_mapped->getAttribute("_species");
+        m_species = m_mapped->getAttribute(attribute::Species);
     }
 }
 
@@ -313,7 +311,7 @@ struct DataAdapter<Geometry, osg::Vec3Array, Mapped, normalize> {
 };
 
 template<class Geometry, bool normalize>
-struct DataAdapter<Geometry, osg::FloatArray, typename vistle::Vec<Scalar, 3>::const_ptr, normalize> {
+struct DataAdapter<Geometry, osg::FloatArray, const vistle::Vec<Scalar, 3>, normalize> {
     DataAdapter(typename Geometry::const_ptr tri, typename vistle::Vec<Scalar, 3>::const_ptr mapped)
     : size(mapped->getSize())
     , x(size > 0 ? &mapped->x()[0] : nullptr)
@@ -321,14 +319,14 @@ struct DataAdapter<Geometry, osg::FloatArray, typename vistle::Vec<Scalar, 3>::c
     , z(size > 0 ? &mapped->z()[0] : nullptr)
     , mapping(mapped->guessMapping(tri))
     {}
-    float getValue(Index idx) { return sqrt(x[idx] * x[idx] + y[idx] * y[idx] + z[idx] * z[idx]); }
+    float getValue(Index idx) { return Vector3(x[idx], y[idx], z[idx]).norm(); }
     vistle::Index size = 0;
     const Scalar *x = nullptr, *y = nullptr, *z = nullptr;
     vistle::DataBase::Mapping mapping = vistle::DataBase::Unspecified;
 };
 
 template<class Geometry, bool normalize>
-struct DataAdapter<Geometry, osg::FloatArray, typename vistle::Vec<Index>::const_ptr, normalize> {
+struct DataAdapter<Geometry, osg::FloatArray, const vistle::Vec<Index>, normalize> {
     DataAdapter(typename Geometry::const_ptr tri, typename vistle::Vec<Index>::const_ptr mapped)
     : size(mapped->getSize()), x(size > 0 ? &mapped->x()[0] : nullptr), mapping(mapped->guessMapping(tri))
     {}
@@ -832,8 +830,8 @@ const OsgColorMap *VistleGeometryGenerator::getColorMap(const std::string &speci
 {
 #ifdef COVER_PLUGIN
     std::lock_guard<std::mutex> lock(s_coverMutex);
-    if (m_colormaps && !m_species.empty()) {
-        auto it = m_colormaps->find(m_species);
+    if (m_colormaps) {
+        auto it = m_colormaps->find(species);
         if (it != m_colormaps->end()) {
             return &it->second;
         }
@@ -882,28 +880,33 @@ osg::Geode *VistleGeometryGenerator::operator()(osg::ref_ptr<osg::StateSet> defa
     osg::ref_ptr<osg::StateSet> state;
 
     bool transparent = false;
-    if (m_geo && m_geo->hasAttribute("_transparent")) {
-        transparent = m_geo->getAttribute("_transparent") != "false";
+    bool forceOpaque = false;
+    if (m_geo && m_geo->hasAttribute(attribute::Transparent)) {
+        transparent = m_geo->getAttribute(attribute::Transparent) != "false";
+        forceOpaque = !transparent;
     }
 
     size_t numPrimitives = m_options.numPrimitives;
-    if (m_geo && m_geo->hasAttribute("_bin_num_primitives")) {
-        auto np = m_geo->getAttribute("_bin_num_primitives");
+    if (m_geo && m_geo->hasAttribute(attribute::BinNumPrimitives)) {
+        auto np = m_geo->getAttribute(attribute::BinNumPrimitives);
         numPrimitives = atol(np.c_str());
     }
     vistle::Points::const_ptr points = vistle::Points::as(m_geo);
 
-    osg::Material *mat = nullptr;
+    osg::Material *material = nullptr;
     if (m_ro && m_ro->hasSolidColor) {
         const auto &c = m_ro->solidColor;
-        mat = new osg::Material;
-        mat->setName(nodename + ".material");
-        mat->setAmbient(osg::Material::FRONT_AND_BACK, osg::Vec4(c[0], c[1], c[2], c[3]));
-        mat->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4(c[0], c[1], c[2], c[3]));
-        mat->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4(0.2, 0.2, 0.2, c[3]));
-        mat->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
+        material = new osg::Material;
+        material->setName(nodename + ".material");
+        material->setAmbient(osg::Material::FRONT_AND_BACK, osg::Vec4(c[0], c[1], c[2], c[3]));
+        material->setDiffuse(osg::Material::FRONT_AND_BACK, osg::Vec4(c[0], c[1], c[2], c[3]));
+        material->setSpecular(osg::Material::FRONT_AND_BACK, osg::Vec4(0.2, 0.2, 0.2, c[3]));
+        material->setColorMode(osg::Material::AMBIENT_AND_DIFFUSE);
         if (c[3] > 0.f && c[3] < 1.f)
             transparent = true;
+    }
+    if (forceOpaque) {
+        transparent = false;
     }
 
     if (defaultState) {
@@ -925,8 +928,8 @@ osg::Geode *VistleGeometryGenerator::operator()(osg::ref_ptr<osg::StateSet> defa
         }
     }
     state->setName(nodename + ".state");
-    if (mat)
-        state->setAttribute(mat);
+    if (material)
+        state->setAttribute(material);
 
     vistle::Normals::const_ptr normals = vistle::Normals::as(m_normal);
     if (normals) {
@@ -943,8 +946,8 @@ osg::Geode *VistleGeometryGenerator::operator()(osg::ref_ptr<osg::StateSet> defa
     const OsgColorMap *colormap = nullptr;
     bool haveSpheres = false;
     bool correctDepth = true;
-    if (m_geo && m_geo->hasAttribute("_approximate_depth")) {
-        correctDepth = m_geo->getAttribute("_approximate_depth") != "true";
+    if (m_geo && m_geo->hasAttribute(attribute::ApproximateDepth)) {
+        correctDepth = m_geo->getAttribute(attribute::ApproximateDepth) != "true";
     }
 #endif
     vistle::DataBase::const_ptr database = vistle::DataBase::as(m_mapped);
@@ -1457,8 +1460,8 @@ osg::Geode *VistleGeometryGenerator::operator()(osg::ref_ptr<osg::StateSet> defa
 
     // set shader parameters
     std::map<std::string, std::string> parammap;
-    std::string shadername = m_geo->getAttribute("shader");
-    std::string shaderparams = m_geo->getAttribute("shader_params");
+    std::string shadername = m_geo->getAttribute(attribute::Shader);
+    std::string shaderparams = m_geo->getAttribute(attribute::ShaderParams);
     // format has to be '"key=value" "key=value1 value2"'
     bool escaped = false;
     std::string::size_type keyvaluestart = std::string::npos;

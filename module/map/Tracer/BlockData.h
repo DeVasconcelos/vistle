@@ -1,5 +1,5 @@
-#ifndef TRACER_BLOCKDATA_H
-#define TRACER_BLOCKDATA_H
+#ifndef VISTLE_TRACER_BLOCKDATA_H
+#define VISTLE_TRACER_BLOCKDATA_H
 
 #include <mutex>
 #include <vector>
@@ -8,9 +8,12 @@
 #include <vistle/core/lines.h>
 #include <vistle/core/object.h>
 
+template<typename S>
+class Particle;
 
 class BlockData {
-    friend class Particle;
+    friend class Particle<float>;
+    friend class Particle<double>;
 
 private:
     vistle::Object::const_ptr m_grid;

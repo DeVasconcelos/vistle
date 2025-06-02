@@ -1,5 +1,5 @@
-#ifndef COMMUNICATOR_COLLECTIVE_H
-#define COMMUNICATOR_COLLECTIVE_H
+#ifndef VISTLE_MANAGER_COMMUNICATOR_H
+#define VISTLE_MANAGER_COMMUNICATOR_H
 
 #include <vector>
 #include <set>
@@ -37,7 +37,7 @@ public:
     static Communicator &the();
 
     void setVistleRoot(const std::string &dir, const std::string &buildtype);
-    void run();
+    bool run();
     bool dispatch(bool *work);
     void terminate();
     bool handleMessage(const message::Buffer &message, const MessagePayload &payload = MessagePayload());
@@ -56,12 +56,12 @@ public:
     bool connectHub(std::string host, unsigned short port, unsigned short dataPort);
     boost::mpi::communicator comm() const;
 
-    void lock();
-    void unlock();
 
 private:
     bool connectData();
 
+    void lock();
+    void unlock();
 
     boost::mpi::communicator m_comm;
     ClusterManager *m_clusterManager;
@@ -96,9 +96,9 @@ private:
 
     Communicator(const Communicator &other); // not implemented
 
-    boost::asio::io_service m_ioService;
+    boost::asio::io_context m_ioContext;
     boost::asio::ip::tcp::socket m_hubSocket;
-    boost::asio::ip::tcp::resolver::iterator m_dataEndpoint;
+    boost::asio::ip::basic_resolver_results<boost::asio::ip::tcp> m_dataEndpoint;
 
     void setStatus(const std::string &text, int prio);
     void clearStatus();

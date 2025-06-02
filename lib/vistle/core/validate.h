@@ -1,9 +1,8 @@
-#ifndef VISTLE_VALIDATE_H
+#ifndef VISTLE_CORE_VALIDATE_H
+#define VISTLE_CORE_VALIDATE_H
 
-#define VISTLE_VALIDATE_H
 
-
-#include <vtkm/Types.h>
+#include <viskores/Types.h>
 #include <cstring>
 
 
@@ -40,7 +39,7 @@
 
 #define VALIDATE_INDEX(idx) \
     VALIDATE(idx < size_t(InvalidIndex)); \
-    VALIDATE(idx <= size_t(std::numeric_limits<vtkm::Id>::max())); \
+    VALIDATE(idx <= size_t(std::numeric_limits<viskores::Id>::max())); \
     /* VALIDATE(idx >= 0); */
 
 #define VALIDATE_ENUM(val) VALIDATE(strncmp(toString(val), "[Unknown", 8) != 0)
@@ -128,7 +127,7 @@
             throw vistle::except::index_overflow(#expr " = " + std::to_string(expr) + \
                                                  ", recompile with 64 bit indices"); \
         } \
-        if ((expr) > size_t(std::numeric_limits<vtkm::Id>::max())) { \
+        if ((expr) > size_t(std::numeric_limits<viskores::Id>::max())) { \
             throw vistle::except::index_overflow(#expr " = " + std::to_string(expr) + \
                                                  ", recompile with 64 bit indices"); \
         } \

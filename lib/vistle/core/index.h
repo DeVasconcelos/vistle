@@ -1,5 +1,5 @@
-#ifndef INDEX_H
-#define INDEX_H
+#ifndef VISTLE_CORE_INDEX_H
+#define VISTLE_CORE_INDEX_H
 
 #include <cstdlib>
 #include <cinttypes>
@@ -26,6 +26,9 @@ typedef SIndex32 SIndex;
 const Index InvalidIndex = InvalidIndex32;
 #endif
 
+#define FOR_ALL_INDEX(MACRO) \
+    MACRO(Index32) \
+    MACRO(Index64)
 
 } // namespace vistle
 

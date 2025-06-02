@@ -1,5 +1,5 @@
-#ifndef VISIT_VISTLE_ENGINE_H
-#define VISIT_VISTLE_ENGINE_H
+#ifndef VISTLE_INSITU_LIBSIM_ENGINE_H
+#define VISTLE_INSITU_LIBSIM_ENGINE_H
 
 #include "DataTransmitter.h"
 #include "MeshInfo.h"
@@ -11,7 +11,7 @@
 #include <vistle/insitu/message/addObjectMsq.h>
 #include <vistle/util/enumarray.h>
 
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <mpi.h>
 
@@ -120,4 +120,4 @@ private:
 } // namespace insitu
 } // namespace vistle
 
-#endif // !VISIT_VISTLE_ENGINE_H
+#endif

@@ -1,10 +1,9 @@
+#ifndef VISTLE_CORE_STRUCTUREDGRIDBASE_H
+#define VISTLE_CORE_STRUCTUREDGRIDBASE_H
+
 //-------------------------------------------------------------------------
-// STRUCTURED GRID OBJECT BASE CLASS H
-// *
 // * Base class for Structured Grid Objects
 //-------------------------------------------------------------------------
-#ifndef STRUCTURED_GRID_BASE_H
-#define STRUCTURED_GRID_BASE_H
 
 #include "scalar.h"
 #include "shm.h"
@@ -93,6 +92,7 @@ public:
         assert(coords[2] < dims[2] - 1 || coords[2] == 0);
         return coords;
     }
+
     static inline std::array<Index, 8> cellVertices(Index el, const Index dims[3])
     {
         auto &H = HexahedronIndices;
@@ -115,6 +115,8 @@ public:
         }
         return cl;
     }
+
+    inline Index cellNumVertices(Index elem) const override { return 8; }
 
     virtual bool isGhostCell(Index elem) const override;
 
@@ -153,4 +155,4 @@ public:
 ARCHIVE_ASSUME_ABSTRACT(StructuredGridBase)
 
 } // namespace vistle
-#endif /* STRUCTURED_GRID_BASE_H */
+#endif

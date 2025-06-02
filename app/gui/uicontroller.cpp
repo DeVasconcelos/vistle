@@ -37,6 +37,9 @@
 
 namespace gui {
 
+static const QString position = "position[";
+static const QString layer = "layer[";
+
 QStringList fileNameFilters{"Vistle Files (*.vsl)", "Python Files (*.py)"};
 
 UiController::UiController(int argc, char *argv[], QObject *parent): QObject(parent), m_mainWindow(nullptr)
@@ -45,6 +48,7 @@ UiController::UiController(int argc, char *argv[], QObject *parent): QObject(par
     m_config = std::make_unique<vistle::config::Access>(hostname, hostname);
     vistle::Directory dir(argc, argv);
     m_config->setPrefix(dir.prefix());
+    configure();
 
     std::string host = "localhost";
     unsigned short port = *m_config->value<int64_t>("system", "net", "controlport", 31093);
@@ -131,6 +135,12 @@ UiController::UiController(int argc, char *argv[], QObject *parent): QObject(par
     m_mainWindow->dataFlowView()->addToToolBar(m_mainWindow->toolBar(), m_mainWindow->layerWidgetPosition());
     connect(m_mainWindow->dataFlowView(), SIGNAL(executeDataFlow()), SLOT(executeDataFlowNetwork()));
     connect(m_mainWindow->dataFlowView(), SIGNAL(visibleLayerChanged(int)), m_scene, SLOT(visibleLayerChanged(int)));
+    connect(m_mainWindow->parameters(), &Parameters::highlightModule, m_scene, &DataFlowNetwork::highlightModule);
+    connect(m_mainWindow->parameters(), &Parameters::disconnectParameters, this,
+            [this](int fromId, QString fromName, int toId, QString toName) {
+                vistle::message::Disconnect disconnect(fromId, fromName.toStdString(), toId, toName.toStdString());
+                m_vistleConnection->sendMessage(disconnect);
+            });
 
     connect(m_mainWindow, SIGNAL(quitRequested(bool &)), SLOT(quitRequested(bool &)));
     connect(m_mainWindow, SIGNAL(newDataFlow()), SLOT(clearDataFlowNetwork()));
@@ -169,6 +179,7 @@ UiController::UiController(int argc, char *argv[], QObject *parent): QObject(par
             SLOT(addModule(int, boost::uuids::uuid, QString)));
     connect(&m_observer, SIGNAL(deleteModule_s(int)), m_scene, SLOT(deleteModule(int)));
     connect(&m_observer, SIGNAL(moduleStateChanged_s(int, int)), m_scene, SLOT(moduleStateChanged(int, int)));
+    connect(&m_observer, SIGNAL(setName_s(int, QString)), m_scene, SLOT(setDisplayName(int, QString)));
     connect(&m_observer, &VistleObserver::message_s, [this](int senderId, int type, QString text) {
         if (m_scene)
             m_scene->moduleMessage(senderId, type, text);
@@ -181,6 +192,10 @@ UiController::UiController(int argc, char *argv[], QObject *parent): QObject(par
             SLOT(messagesVisibilityChanged(int, bool)));
     connect(this, SIGNAL(visibleModuleMessage(int, int, QString)), m_mainWindow->moduleView(),
             SLOT(appendMessage(int, int, QString)));
+    connect(m_mainWindow->moduleView(), SIGNAL(toggleOutputStreaming(int, bool)), m_scene,
+            SLOT(outputStreamingChanged(int, bool)));
+    connect(m_scene, SIGNAL(toggleOutputStreaming(int, bool)), m_mainWindow->moduleView(),
+            SLOT(setOutputStreaming(int, bool)));
     connect(&m_observer, SIGNAL(itemInfo_s(QString, int, int, QString)), m_scene,
             SLOT(itemInfoChanged(QString, int, int, QString)));
     connect(&m_observer, SIGNAL(newPort_s(int, QString)), m_scene, SLOT(newPort(int, QString)));
@@ -255,10 +270,28 @@ UiController::UiController(int argc, char *argv[], QObject *parent): QObject(par
             mod->deleteModule();
         }
     });
+    connect(m_mainWindow->moduleView(), &ModuleView::toggleOutputStreaming, [this](int id, bool enable) {
+        auto mod = m_scene->findModule(id);
+        if (mod) {
+            mod->setOutputStreaming(enable);
+        }
+    });
+    connect(m_mainWindow->moduleView(), &ModuleView::replayOutput, [this](int id) {
+        auto mod = m_scene->findModule(id);
+        if (mod) {
+            mod->replayOutput();
+        }
+    });
 
     m_mainWindow->show();
 
     m_initialized = true;
+}
+
+void UiController::configure()
+{
+    Port::configure();
+    Module::configure();
 }
 
 bool UiController::init()
@@ -281,11 +314,29 @@ bool UiController::init()
     // restore default handler for Ctrl-C
     signal(SIGINT, SIG_DFL);
 
+    m_mainWindow->dataFlowView()->setFocusProxy(m_mainWindow->moduleBrowser());
+    m_mainWindow->moduleBrowser()->setFocus();
+
+    m_mainWindow->installEventFilter(this);
+
     return true;
 }
 
 UiController::~UiController()
 {}
+
+bool UiController::eventFilter(QObject *object, QEvent *event)
+{
+    if (object == m_mainWindow && event->type() == QEvent::KeyPress) {
+        QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent->key() == Qt::Key_Escape) {
+            m_mainWindow->dataFlowView()->setFocus();
+            return true;
+        } else
+            return false;
+    }
+    return false;
+}
 
 void UiController::finish()
 {
@@ -507,6 +558,7 @@ void UiController::moduleSelectionChanged()
         m_mainWindow->moduleViewDock()->raise();
         m_mainWindow->moduleView()->setId(id);
         if (Module *m = m_scene->findModule(id)) {
+            m_mainWindow->moduleView()->setOutputStreaming(id, m->isOutputStreaming());
             m_mainWindow->moduleView()->setMessages(m->messages(), m->messagesVisible());
         }
     } else {
@@ -527,12 +579,17 @@ void UiController::newParameter(int moduleId, QString parameterName)
     m_console->appendDebug(text);
 #endif
 #if 1
-    if (parameterName == "_position") {
-        if (Module *m = m_scene->findModule(moduleId)) {
-            auto p = vistle::VistleConnection::the().getParameter(moduleId, "_position");
-            auto vp = std::dynamic_pointer_cast<vistle::VectorParameter>(p);
-            if (vp && vp->isDefault() && m->isPositionValid()) {
-                m->sendPosition();
+    if (moduleId == vistle::message::Id::Vistle) {
+        if (parameterName.startsWith(position)) {
+            auto idstr = parameterName.mid(position.length());
+            idstr.chop(1);
+            auto id = idstr.toInt();
+            if (Module *m = m_scene->findModule(id)) {
+                auto p = vistle::VistleConnection::the().getParameter(moduleId, parameterName.toStdString());
+                auto vp = std::dynamic_pointer_cast<vistle::VectorParameter>(p);
+                if (vp && vp->isDefault() && m->isPositionValid()) {
+                    m->sendPosition();
+                }
             }
         }
     }
@@ -545,16 +602,28 @@ void UiController::parameterValueChanged(int moduleId, QString parameterName)
    QString text = "Parameter value changed on ID: " + QString::number(moduleId) + ":" + parameterName;
    m_console->appendDebug(text);
 #endif
-    if (parameterName == "_position") {
-        auto p = vistle::VistleConnection::the().getParameter(moduleId, "_position");
+    if (moduleId != vistle::message::Id::Vistle)
+        return;
+    auto idstr = parameterName;
+    if (parameterName.startsWith(position)) {
+        idstr = idstr.mid(position.length());
+    } else if (parameterName.startsWith(layer)) {
+        idstr = idstr.mid(layer.length());
+    } else {
+        return;
+    }
+    idstr.chop(1);
+    auto id = idstr.toInt();
+    if (parameterName.startsWith(position)) {
+        auto p = vistle::VistleConnection::the().getParameter(moduleId, parameterName.toStdString());
         auto vp = std::dynamic_pointer_cast<vistle::VectorParameter>(p);
         if (vp && !vp->isDefault()) {
             vistle::ParamVector pos = vp->getValue();
-            m_scene->moveModule(moduleId, pos[0], pos[1]);
+            m_scene->moveModule(id, pos[0], pos[1]);
         }
     }
-    if (parameterName == "_layer") {
-        auto p = vistle::VistleConnection::the().getParameter(moduleId, "_layer");
+    if (parameterName.startsWith(layer)) {
+        auto p = vistle::VistleConnection::the().getParameter(moduleId, parameterName.toStdString());
         auto l = std::dynamic_pointer_cast<vistle::IntParameter>(p);
         if (l) {
             const int layer = l->getValue();
@@ -562,7 +631,7 @@ void UiController::parameterValueChanged(int moduleId, QString parameterName)
                 DataFlowView::the()->setNumLayers(layer + 1);
             }
             if (!l->isDefault()) {
-                if (Module *m = m_scene->findModule(moduleId)) {
+                if (Module *m = m_scene->findModule(id)) {
                     m->setLayer(layer);
                 }
             }
@@ -681,10 +750,14 @@ void UiController::screenshot(QString imageFile, bool quit)
     if (quit) {
         vistle::message::Quit q;
         m_vistleConnection->sendMessage(q);
+        exit(0);
     }
 }
 void UiController::lockUi(bool locked)
 {
+    if (!locked) {
+        m_mainWindow->dataFlowView()->zoomAll();
+    }
     m_mainWindow->m_moduleBrowser->setEnabled(!locked);
     m_mainWindow->moduleView()->setEnabled(!locked);
     m_mainWindow->setInteractionEnabled(!locked);

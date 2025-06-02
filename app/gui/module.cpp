@@ -8,7 +8,6 @@
 
 #include <cassert>
 
-#include <QDebug>
 #include <QGraphicsItem>
 #include <QGraphicsScene>
 #include <QGraphicsSceneContextMenuEvent>
@@ -28,16 +27,25 @@
 #include "uicontroller.h"
 #include "dataflowview.h"
 #include "modulebrowser.h"
+#include "parameterconnectionwidgets.h"
+#include "ui_setnamedialog.h"
 
 #include <vistle/config/file.h>
 #include <vistle/config/array.h>
+#include <vistle/config/value.h>
 
 namespace gui {
 
-const double Module::portDistance = 3.;
 boost::uuids::nil_generator nil_uuid;
-bool Module::s_snapToGrid = true;
-const double Module::borderWidth = 4.;
+double Module::portDistance = 3.;
+double Module::borderWidth = 4.;
+
+void Module::configure()
+{
+    vistle::config::File config("gui");
+    portDistance = *config.value<double>("module", "port_spacing", 3.);
+    borderWidth = *config.value<double>("module", "border_width", 4.);
+}
 
 /*!
  * \brief Module::Module
@@ -63,7 +71,7 @@ Module::Module(QGraphicsItem *parent, QString name)
     setFlag(QGraphicsItem::ItemSendsGeometryChanges);
     setAcceptHoverEvents(true);
     setCursor(Qt::OpenHandCursor);
-
+    createParameterPopup();
     createActions();
     createMenus();
     createGeometry();
@@ -79,12 +87,15 @@ Module::~Module()
     delete m_moduleMenu;
     delete m_execAct;
     delete m_attachDebugger;
+    delete m_replayOutput;
+    delete m_toggleOutputStreaming;
     delete m_cancelExecAct;
     delete m_deleteThisAct;
     delete m_deleteSelAct;
     delete m_selectUpstreamAct;
     delete m_selectDownstreamAct;
     delete m_createModuleGroup;
+    delete m_parameterPopup;
 }
 
 float Module::gridSpacingX()
@@ -215,12 +226,46 @@ void Module::showError()
     doLayout();
 }
 
+void Module::highlightModule(int moduleId)
+{
+    if (moduleId == m_id) {
+        m_highlighted = true;
+    } else if (moduleId == -1) {
+        m_highlighted = false;
+    }
+    update();
+}
 
 void Module::attachDebugger()
 {
-    vistle::message::Debug m(m_id);
+    vistle::message::Debug m(m_id, vistle::message::Debug::AttachDebugger);
     m.setDestId(m_hub);
     vistle::VistleConnection::the().sendMessage(m);
+}
+
+void Module::replayOutput()
+{
+    vistle::message::Debug m(m_id, vistle::message::Debug::ReplayOutput);
+    m.setDestId(m_hub);
+    vistle::VistleConnection::the().sendMessage(m);
+}
+
+void Module::setOutputStreaming(bool enable)
+{
+    using vistle::message::Debug;
+
+    vistle::message::Debug m(m_id, Debug::SwitchOutputStreaming,
+                             enable ? Debug::SwitchAction::SwitchOn : Debug::SwitchAction::SwitchOff);
+    m.setDestId(m_hub);
+    vistle::VistleConnection::the().sendMessage(m);
+
+    m_toggleOutputStreaming->setChecked(enable);
+    emit outputStreamingChanged(enable);
+}
+
+bool Module::isOutputStreaming() const
+{
+    return m_toggleOutputStreaming->isChecked();
 }
 
 void Module::createGeometry()
@@ -233,6 +278,10 @@ void Module::createGeometry()
  */
 void Module::createActions()
 {
+    m_changeNameAct = new QAction("Rename", this);
+    m_changeNameAct->setStatusTip("Change the display name of this module");
+    connect(m_changeNameAct, &QAction::triggered, [this]() { emit changeDisplayName(); });
+
     m_selectUpstreamAct = new QAction("Select Upstream", this);
     m_selectUpstreamAct->setStatusTip("Select all modules feeding data to this one");
     connect(m_selectUpstreamAct, &QAction::triggered, [this]() { emit selectConnected(SelectUpstream, m_id); });
@@ -267,6 +316,15 @@ void Module::createActions()
     m_attachDebugger->setStatusTip("Debug running module");
     connect(m_attachDebugger, SIGNAL(triggered(bool)), this, SLOT(attachDebugger()));
 
+    m_replayOutput = new QAction("Replay Output", this);
+    m_replayOutput->setStatusTip("Send last lines of console output to GUI");
+    connect(m_replayOutput, SIGNAL(triggered(bool)), this, SLOT(replayOutput()));
+
+    m_toggleOutputStreaming = new QAction("Stream Output", this);
+    m_toggleOutputStreaming->setCheckable(true);
+    m_toggleOutputStreaming->setStatusTip("Switch streaming of console output on or off");
+    connect(m_toggleOutputStreaming, SIGNAL(triggered(bool)), this, SLOT(setOutputStreaming(bool)));
+
     m_cancelExecAct = new QAction("Cancel Execution", this);
     m_cancelExecAct->setStatusTip("Interrupt execution of module");
     connect(m_cancelExecAct, SIGNAL(triggered()), this, SLOT(cancelExecModule()));
@@ -284,6 +342,31 @@ void Module::createActions()
     connect(m_cloneModuleLinked, &QAction::triggered, this, &Module::cloneModuleLinked);
 }
 
+void Module::changeDisplayName()
+{
+    QDialog *dialog = new QDialog;
+    ::Ui::SetNameDialog *ui = new ::Ui::SetNameDialog;
+    ui->setupUi(dialog);
+    connect(ui->buttonBox->button(QDialogButtonBox::Reset), SIGNAL(clicked()), ui->lineEdit, SLOT(clear()));
+    dialog->setFocusProxy(ui->lineEdit);
+    ui->lineEdit->setFocus();
+
+    ui->lineEdit->setText(m_displayName);
+    dialog->exec();
+
+    switch (dialog->result()) {
+    case QDialog::Rejected:
+        return;
+
+    case QDialog::Accepted:
+        break;
+    }
+
+    QString name = ui->lineEdit->text();
+    vistle::message::SetName m(m_id, name.toStdString());
+    vistle::VistleConnection::the().sendMessage(m);
+}
+
 /*!
  * \brief Module::createMenus
  */
@@ -292,6 +375,7 @@ void Module::createMenus()
     m_moduleMenu = new QMenu();
     m_moduleMenu->addAction(m_execAct);
     m_moduleMenu->addAction(m_cancelExecAct);
+    m_moduleMenu->addAction(m_changeNameAct);
     m_moduleMenu->addSeparator();
     m_layerMenu = m_moduleMenu->addMenu("To Layer...");
     m_moduleMenu->addSeparator();
@@ -301,10 +385,13 @@ void Module::createMenus()
     m_moduleMenu->addSeparator();
     m_moduleMenu->addAction(m_cloneModule);
     m_moduleMenu->addAction(m_cloneModuleLinked);
-    m_moduleMenu->addAction(m_restartAct);
     m_moveToMenu = m_moduleMenu->addMenu("Move To...");
     m_replaceWithMenu = m_moduleMenu->addMenu("Replace With...");
-    m_moduleMenu->addAction(m_attachDebugger);
+    m_advancedMenu = m_moduleMenu->addMenu("Advanced...");
+    m_advancedMenu->addAction(m_replayOutput);
+    m_advancedMenu->addAction(m_toggleOutputStreaming);
+    m_advancedMenu->addAction(m_restartAct);
+    m_advancedMenu->addAction(m_attachDebugger);
     m_moduleMenu->addAction(m_createModuleGroup);
     m_moduleMenu->addSeparator();
     m_moduleMenu->addAction(m_deleteThisAct);
@@ -318,7 +405,7 @@ void Module::doLayout()
     // get the pixel width of the string
     QFont font;
     QFontMetrics fm(font);
-    QRect nameRect = fm.boundingRect(m_displayName);
+    QRect nameRect = fm.boundingRect(m_visibleName);
     m_fontHeight = nameRect.height() + 4 * portDistance;
 
     double w = nameRect.width() + 2 * portDistance;
@@ -396,7 +483,13 @@ void Module::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QW
     painter->setBrush(brush);
 
     QPen highlightPen(m_borderColor, borderWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
-    if (isSelected() && m_Status != BUSY) {
+    if (m_highlighted) {
+        highlightPen.setColor(Qt::yellow);
+        QPalette p;
+        QPen pen(p.color(QPalette::Active, QPalette::Highlight), borderWidth, Qt::SolidLine, Qt::RoundCap,
+                 Qt::RoundJoin);
+        painter->setPen(pen);
+    } else if (isSelected() && m_Status != BUSY) {
         QPen pen(scene()->highlightColor(), borderWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
         painter->setPen(pen);
     } else {
@@ -411,7 +504,7 @@ void Module::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QW
     painter->drawRoundedRect(rect(), portDistance, portDistance);
 
     painter->setPen(Qt::black);
-    painter->drawText(QPointF(portDistance, Port::portSize + m_fontHeight / 2.), m_displayName);
+    painter->drawText(QPointF(portDistance, Port::portSize + m_fontHeight / 2.), m_visibleName);
 
     QFont font;
     QFontMetrics fm(font);
@@ -446,6 +539,7 @@ void Module::contextMenuEvent(QGraphicsSceneContextMenuEvent *event)
     m_cloneModuleLinked->setVisible(!multiSel);
     m_restartAct->setVisible(!multiSel);
     m_attachDebugger->setVisible(!multiSel);
+    m_replayOutput->setVisible(!multiSel);
 
     if (scene() && scene()->moduleBrowser()) {
         auto getModules = [this](int hubId) {
@@ -490,6 +584,9 @@ void Module::contextMenuEvent(QGraphicsSceneContextMenuEvent *event)
                         break;
                     }
                 }
+            }
+            if (baseName.endsWith("Vtkm")) {
+                baseName = baseName.left(baseName.size() - 4);
             }
             auto add = [this](QString name) {
                 auto act = new QAction(name, this);
@@ -624,7 +721,8 @@ void Module::updatePosition(QPointF newPos) const
         // don't update until we have our module id
         const double x = newPos.x();
         const double y = newPos.y();
-        setParameter("_position", vistle::ParamVector(x, y));
+        DataFlowNetwork::setParameter(vistle::message::Id::Vistle, QString("position[%1]").arg(id()),
+                                      vistle::ParamVector(x, y));
     }
 }
 
@@ -738,31 +836,41 @@ void Module::setName(QString name)
     updateText();
 }
 
+void Module::setDisplayName(QString name)
+{
+    m_displayName = name;
+    updateText();
+}
+
 void Module::updateText()
 {
-    //m_displayName = QString("%1_%2").arg(name, QString::number(m_id));
-    m_displayName = m_name;
-    if (m_inPorts.isEmpty()) {
+    //m_visibleName = QString("%1_%2").arg(name, QString::number(m_id));
+    m_visibleName = m_name;
+    if (!m_displayName.isEmpty()) {
+        m_visibleName = m_displayName;
+    } else if (m_inPorts.isEmpty()) {
     } else {
         if (!m_info.isEmpty()) {
-            m_displayName = m_name;
+            m_visibleName = m_name;
             if (m_name == "IndexManifolds")
-                m_displayName = "Index";
+                m_visibleName = "Index";
             if (m_name.startsWith("IsoSurface"))
-                m_displayName = "Iso";
+                m_visibleName = "Iso";
             if (m_name.startsWith("CuttingSurface"))
-                m_displayName = "Cut";
+                m_visibleName = "Cut";
             if (m_name.startsWith("AddAttribute"))
-                m_displayName = "Attr";
+                m_visibleName = "Attr";
             if (m_name.startsWith("Variant"))
-                m_displayName = "Var";
+                m_visibleName = "Var";
             if (m_name.startsWith("Transform"))
-                m_displayName = "X";
+                m_visibleName = "X";
             if (m_name.startsWith("Thicken"))
-                m_displayName = "Th";
-            m_displayName += ":" + m_info;
-            if (m_displayName.length() > 21) {
-                m_displayName = m_displayName.left(20) + "…";
+                m_visibleName = "Th";
+            if (m_name.startsWith("VortexCriteria"))
+                m_visibleName = "Vortex";
+            m_visibleName += ":" + m_info;
+            if (m_visibleName.length() > 21) {
+                m_visibleName = m_visibleName.left(20) + "…";
             }
         }
     }
@@ -812,7 +920,8 @@ void Module::setLayer(int layer)
 {
     if (m_layer != layer) {
         m_layer = layer;
-        setParameter("_layer", vistle::Integer(layer));
+        DataFlowNetwork::setParameter(vistle::message::Id::Vistle, QString("layer[%1]").arg(id()),
+                                      vistle::Integer(layer));
     }
     updateLayer();
 }
@@ -860,6 +969,8 @@ void Module::setPositionValid()
 
 Port *Module::getGuiPort(const vistle::Port *port) const
 {
+    if (!port)
+        return nullptr;
     const auto it = m_vistleToGui.find(*port);
     if (it == m_vistleToGui.end())
         return nullptr;
@@ -886,6 +997,29 @@ QColor Module::hubColor(int hub)
     return QColor(100 + r * 100, 100 + g * 100, 100 + b * 100);
 }
 
+void Module::createParameterPopup()
+{
+    m_parameterPopup = new ParameterPopup(QStringList{});
+    connect(m_parameterPopup, &ParameterPopup::parameterSelected, this, [this](const QString &param) {
+        // Handle parameter button click
+        vistle::Port from(m_parameterConnectionRequest.moduleId, m_parameterConnectionRequest.paramName.toStdString(),
+                          vistle::Port::Type::PARAMETER);
+        vistle::Port to(m_id, param.toStdString(), vistle::Port::Type::PARAMETER);
+        vistle::VistleConnection::the().connect(&from, &to);
+        m_parameterPopup->close();
+    });
+}
+
+void Module::showParameters(const ParameterConnectionRequest &request)
+{
+    auto params = scene()->getModuleParameters(m_id);
+    m_parameterPopup->setParameters(params);
+    m_parameterPopup->setSearchText(request.paramName);
+    m_parameterConnectionRequest = request;
+    m_parameterPopup->move(request.pos);
+    m_parameterPopup->show();
+}
+
 void Module::mousePressEvent(QGraphicsSceneMouseEvent *event)
 {
     Base::mousePressEvent(event);
@@ -902,12 +1036,10 @@ void Module::mouseReleaseEvent(QGraphicsSceneMouseEvent *event)
     for (auto *item: items) {
         if (auto *mod = dynamic_cast<Module *>(item)) {
             mod->setPositionValid();
-            auto p = mod->getParameter<vistle::ParamVector>("_position");
-            if (p) {
-                vistle::ParamVector v = p->getValue();
-                if (v[0] != pos().x() || v[1] != pos().y()) {
-                    mod->sendPosition();
-                }
+            auto id = mod->id();
+            auto p = DataFlowNetwork::getModulePosition(id);
+            if (pos().x() != p.x() || pos().y() != p.y()) {
+                mod->sendPosition();
             }
         }
     }
@@ -951,7 +1083,6 @@ QPointF Module::portPos(const Port *port) const
 void Module::setStatus(Module::Status status)
 {
     m_Status = status;
-
     QString toolTip = "Unknown";
 
     switch (m_Status) {
@@ -961,7 +1092,10 @@ void Module::setStatus(Module::Status status)
         break;
     case INITIALIZED:
         toolTip = "Initialized";
-        m_borderColor = scene()->highlightColor();
+        m_borderColor = Qt::gray;
+        if (scene()) {
+            m_borderColor = scene()->highlightColor();
+        }
         if (scene() && scene()->moduleBrowser()) {
             auto *mb = scene()->moduleBrowser();
             auto hub = mb->getHubItem(m_hub);
@@ -995,9 +1129,13 @@ void Module::setStatus(Module::Status status)
         toolTip = "Error";
         m_borderColor = Qt::red;
         break;
+    case CRASHED:
+        toolTip = "Crashed";
+        m_color = Qt::darkGray;
+        m_borderColor = Qt::black;
+        break;
     }
-
-    if (m_errorState) {
+    if (m_errorState && m_Status != CRASHED) {
         m_borderColor = Qt::red;
     }
 
@@ -1006,6 +1144,9 @@ void Module::setStatus(Module::Status status)
     }
 
     m_cancelExecAct->setEnabled(status == BUSY || status == EXECUTING);
+    for (auto *a: {m_toggleOutputStreaming, m_attachDebugger, m_execAct}) {
+        a->setEnabled(status != SPAWNING && status != CRASHED);
+    }
 
     if (m_statusText.isEmpty()) {
         if (isEnabled())
@@ -1014,6 +1155,15 @@ void Module::setStatus(Module::Status status)
     }
 
     update();
+}
+
+void Module::setToolTip(QString text)
+{
+    QString tt = m_name;
+    if (!text.isEmpty()) {
+        tt += "\n" + text;
+    }
+    Base::setToolTip(tt);
 }
 
 void Module::setStatusText(QString text, int prio)
@@ -1027,7 +1177,7 @@ void Module::setStatusText(QString text, int prio)
     }
 }
 
-void Module::setInfo(QString text)
+void Module::setInfo(QString text, int type)
 {
     m_info = text;
     updateText();

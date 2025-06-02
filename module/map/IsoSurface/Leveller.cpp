@@ -2,6 +2,13 @@
 //This code is used for both IsoCut and IsoSurface!
 //
 
+#ifdef __APPLE__
+// works around ambiguous __do_deallocate_handle_size in <new>
+#define __do_deallocate_handle_size hide__do_deallocate_handle_size
+#include <new>
+#undef __do_deallocate_handle_size
+#endif
+#include <thrust/execution_policy.h>
 #include <sstream>
 #include <iomanip>
 #include <vistle/core/index.h>
@@ -10,8 +17,6 @@
 #include <vistle/core/triangles.h>
 #include <vistle/core/lines.h>
 #include <vistle/core/shm.h>
-#include <thrust/execution_policy.h>
-#include <thrust/device_vector.h>
 #include <thrust/transform.h>
 #include <thrust/for_each.h>
 #include <thrust/scan.h>
@@ -652,8 +657,9 @@ struct SelectCells {
     {
         int havelower = 0;
         int havehigher = 0;
-        Index Cell = iCell.get<0>();
-        Index nextCell = iCell.get<1>();
+        Index Cell = thrust::get<0>(iCell);
+        Index nextCell = thrust::get<1>(iCell);
+
         // also for POLYHEDRON
         for (Index i = Cell; i < nextCell; i++) {
             Scalar val = m_data.m_isoFunc(m_data.m_cl[i]);
@@ -702,8 +708,8 @@ struct SelectCells2D {
     {
         int havelower = 0;
         int havehigher = 0;
-        Index Cell = iCell.get<0>();
-        Index nextCell = iCell.get<1>();
+        Index Cell = thrust::get<0>(iCell);
+        Index nextCell = thrust::get<1>(iCell);
         for (Index i = Cell; i < nextCell; i++) {
             Scalar val = m_data.m_isoFunc(m_data.m_cl[i]);
             if (val > m_data.m_isovalue) {
@@ -766,7 +772,7 @@ struct ComputeOutputSizes {
     thrust::tuple<Index, Index> operator()(Index CellNr)
     {
         int tableIndex = 0;
-        unsigned numVerts = 0;
+        int numVerts = 0;
         if (m_data.m_isUnstructured) {
             const auto &cl = m_data.m_cl;
 
@@ -889,7 +895,6 @@ Leveller::Leveller(const IsoController &isocontrol, Object::const_ptr grid, cons
 , m_isoValue(isovalue)
 , gmin(std::numeric_limits<Scalar>::max())
 , gmax(-std::numeric_limits<Scalar>::max())
-, m_objectTransform(grid->getTransform())
 {
     if (m_strbase || m_unstr) {
         m_triangles = Triangles::ptr(new Triangles(Object::Initialized));
@@ -1265,10 +1270,19 @@ void Leveller::setComputeNormals(bool value)
 
 void Leveller::addMappedData(DataBase::const_ptr mapobj)
 {
-    if (mapobj->mapping() == DataBase::Element)
-        m_celldata.push_back(mapobj);
-    else
-        m_vertexdata.push_back(mapobj);
+    Field f;
+    if (mapobj) {
+        if (mapobj->guessMapping(m_grid) == DataBase::Element) {
+            f.mapping = vistle::DataBase::Element;
+            f.idx = m_celldata.size();
+            m_celldata.push_back(mapobj);
+        } else {
+            f.mapping = vistle::DataBase::Vertex;
+            f.idx = m_vertexdata.size();
+            m_vertexdata.push_back(mapobj);
+        }
+    }
+    m_fields.push_back(f);
 }
 
 Coords::ptr Leveller::result()
@@ -1283,22 +1297,22 @@ Normals::ptr Leveller::normresult()
     return m_normals;
 }
 
-DataBase::ptr Leveller::mapresult() const
+DataBase::ptr Leveller::mapresult(int i) const
 {
-    if (m_outvertData.size())
-        return m_outvertData[0];
-    else if (m_outcellData.size())
-        return m_outcellData[0];
-    else
+    if (i < 0)
         return DataBase::ptr();
-}
+    if (i >= m_fields.size())
+        return DataBase::ptr();
 
-DataBase::ptr Leveller::cellresult() const
-{
-    if (m_outcellData.size())
-        return m_outcellData[0];
-    else
-        return DataBase::ptr();
+    const Field &f = m_fields[i];
+    if (f.mapping == DataBase::Vertex) {
+        if (f.idx < m_outvertData.size())
+            return m_outvertData[f.idx];
+    } else if (f.mapping == DataBase::Element) {
+        if (f.idx < m_outcellData.size())
+            return m_outcellData[f.idx];
+    }
+    return DataBase::ptr();
 }
 
 std::pair<Scalar, Scalar> Leveller::range()

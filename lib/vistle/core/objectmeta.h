@@ -1,5 +1,5 @@
-#ifndef OBJECTMETA_H
-#define OBJECTMETA_H
+#ifndef VISTLE_CORE_OBJECTMETA_H
+#define VISTLE_CORE_OBJECTMETA_H
 
 #include <array>
 #include <vector>
@@ -40,12 +40,15 @@ public:
     void setCreator(int id) { m_creator = id; }
     Matrix4 transform() const;
     void setTransform(const Matrix4 &transform);
+    void setRestoring(bool restoring) { m_restoring = restoring; }
+    bool isRestoring() const { return m_restoring; }
 
 private:
     int32_t m_block, m_numBlocks, m_timestep, m_numTimesteps, m_animationstep, m_numAnimationsteps, m_iteration,
         m_generation, m_creator;
     double m_realtime;
     std::array<double, 16> m_transform;
+    bool m_restoring = false;
 
     ARCHIVE_ACCESS
     template<class Archive>

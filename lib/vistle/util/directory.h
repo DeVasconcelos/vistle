@@ -1,5 +1,5 @@
-#ifndef VISTLE_DIRECTORY_H
-#define VISTLE_DIRECTORY_H
+#ifndef VISTLE_UTIL_DIRECTORY_H
+#define VISTLE_UTIL_DIRECTORY_H
 
 #include <string>
 #include <map>
@@ -18,6 +18,8 @@ public:
     std::string moduleplugin() const;
     std::string share() const;
     std::string buildType() const;
+
+    std::string covisedir() const;
 
 private:
     std::string m_prefix;

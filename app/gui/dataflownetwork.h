@@ -1,19 +1,18 @@
-#ifndef VSCENE_H
-#define VSCENE_H
+#ifndef VISTLE_GUI_DATAFLOWNETWORK_H
+#define VISTLE_GUI_DATAFLOWNETWORK_H
 
 #include <QList>
 #include <QString>
 #include <QGraphicsScene>
 
 #include "port.h"
-#include "module.h"
 #include <vistle/core/uuid.h>
+#include <vistle/userinterface/vistleconnection.h>
 
 #include <cassert>
 #include <set>
 
 namespace vistle {
-class VistleConnection;
 class StateTracker;
 } // namespace vistle
 
@@ -22,6 +21,7 @@ namespace gui {
 class Connection;
 class MainWindow;
 class ModuleBrowser;
+class Module;
 
 enum SelectionDirection {
     SelectConnected,
@@ -52,9 +52,13 @@ public:
     void removeConnections(Port *port, bool sendToController = false);
     void setConnectionHighlights(Port *port, bool highlight);
 
+    const QList<Module *> &modules() const;
+
     Module *newModule(QString modName);
     Module *findModule(int id) const;
     Module *findModule(const boost::uuids::uuid &spawnUuid) const;
+    Module *findModule(const QPointF &pos) const;
+    QList<QString> getModuleParameters(int id) const;
 
     bool moveModule(int moduleId, float x, float y);
 
@@ -62,6 +66,19 @@ public:
     QRectF computeBoundingRect(int layer = AllLayers) const;
     bool isDark() const;
     vistle::StateTracker &state() const;
+
+    template<class T>
+    static void setParameter(int id, QString name, const T &value);
+
+    template<class T>
+    static std::shared_ptr<vistle::ParameterBase<T>> getParameter(int id, QString name);
+
+    static QPointF getModulePosition(int id);
+    static int getModuleLayer(int id);
+
+signals:
+    void toggleOutputStreaming(int moduleId, bool enable);
+    void highlightModule(int moduleId);
 
 public slots:
     void addModule(int moduleId, const boost::uuids::uuid &spawnUuid, QString name);
@@ -73,9 +90,11 @@ public slots:
     void deleteConnection(int fromId, QString fromName, int toId, QString toName);
     void moduleStatus(int id, QString status, int prio);
     void itemInfoChanged(QString text, int type, int id, QString port);
+    void setDisplayName(int id, QString name);
     void moduleMessage(int senderId, int type, QString message);
     void clearMessages(int moduleId);
     void messagesVisibilityChanged(int moduleId, bool visible);
+    void outputStreamingChanged(int moduleId, bool enable);
 
     void emphasizeConnections(QList<Module *> modules);
     void visibleLayerChanged(int layer);
@@ -136,6 +155,22 @@ private slots:
     void selectConnected(int direction, int id, QString port = QString());
 };
 
+template<class T>
+void DataFlowNetwork::setParameter(int id, QString name, const T &value)
+{
+    vistle::VistleConnection::the().setParameter(id, name.toStdString(), value);
+}
+
+template<class T>
+std::shared_ptr<vistle::ParameterBase<T>> DataFlowNetwork::getParameter(int id, QString name)
+{
+    return std::dynamic_pointer_cast<vistle::ParameterBase<T>>(
+        vistle::VistleConnection::the().getParameter(id, name.toStdString()));
+}
+
 } //namespace gui
 
-#endif // VSCENE_H
+// required for compiling generated moc for emphasizeConnections with GCC and MSVC,
+// but cannot be included at top as this prevents template instantiation for Clang in module.h
+#include "module.h"
+#endif

@@ -1,5 +1,5 @@
-#ifndef DATAMANAGER_H
-#define DATAMANAGER_H
+#ifndef VISTLE_MANAGER_DATAMANAGER_H
+#define VISTLE_MANAGER_DATAMANAGER_H
 
 #include <deque>
 #include <functional>
@@ -12,11 +12,9 @@
 #include <vistle/core/object.h>
 #include <vistle/util/buffer.h>
 
-#if BOOST_VERSION >= 106600
 #include <boost/asio/executor_work_guard.hpp>
-#endif
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include <boost/mpi/request.hpp>
 #include <boost/mpi/communicator.hpp>
@@ -37,12 +35,12 @@ public:
     //! request a remote object for resolving a reference to a sub-object
     bool requestObject(const std::string &referrer, const std::string &objId, int hub, int rank,
                        const ObjectCompletionHandler &handler);
-    bool requestArray(const std::string &referrer, const std::string &arrayId, int type, int hub, int rank,
-                      const ArrayCompletionHandler &handler);
+    bool requestArray(const std::string &referrer, const std::string &arrayId, int localType, int remoteType, int hub,
+                      int rank, const ArrayCompletionHandler &handler);
     bool prepareTransfer(const message::AddObject &add);
     bool completeTransfer(const message::AddObjectCompleted &complete);
     bool notifyTransferComplete(const message::AddObject &add);
-    bool connect(boost::asio::ip::tcp::resolver::iterator &hub);
+    bool connect(boost::asio::ip::basic_resolver_results<boost::asio::ip::tcp> &hub);
     bool dispatch();
 
     void trace(message::Type type);
@@ -74,7 +72,7 @@ private:
     boost::mpi::request m_req;
     int m_msgSize;
 
-    boost::asio::io_service m_ioService;
+    boost::asio::io_context m_ioContext;
     boost::asio::ip::tcp::socket m_dataSocket;
 
     std::set<message::AddObject>
@@ -84,7 +82,12 @@ private:
         m_outstandingAdds; //!< AddObject messages for which requests to retrieve objects from remote have been sent
 
     std::mutex m_requestArrayMutex;
-    std::map<std::string, std::vector<ArrayCompletionHandler>>
+    struct RequestedArray {
+        RequestedArray(int type): type(type){};
+        int type = -1;
+        std::vector<ArrayCompletionHandler> handlers;
+    };
+    std::map<std::string, RequestedArray>
         m_requestedArrays; //!< requests for (sub-)objects which have not been serviced yet
 
     struct OutstandingObject {
@@ -101,11 +104,7 @@ private:
     std::mutex m_sendTaskMutex;
     std::deque<std::future<bool>> m_sendTasks;
 
-#if BOOST_VERSION >= 106600
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> m_workGuard;
-#else
-    std::shared_ptr<boost::asio::io_service::work> m_workGuard;
-#endif
     std::thread m_ioThread;
     std::thread m_recvThread;
     std::thread m_cleanThread;

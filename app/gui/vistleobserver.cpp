@@ -9,6 +9,7 @@
 /**********************************************************************************/
 
 #include <QString>
+#include <QRegularExpression>
 
 #include <vistle/userinterface/vistleconnection.h>
 
@@ -165,12 +166,31 @@ void VistleObserver::itemInfo(const std::string &text, vistle::message::ItemInfo
     emit itemInfo_s(QString::fromStdString(text), type, senderId, QString::fromStdString(port));
 }
 
+namespace {
+
+bool isHtml(const QString &text)
+{
+    const QRegularExpression html("<.*>", QRegularExpression::CaseInsensitiveOption);
+    return html.match(text).hasMatch();
+}
+
+} // namespace
+
 void gui::VistleObserver::info(const std::string &text, vistle::message::SendText::TextType textType, int senderId,
                                int senderRank, vistle::message::Type refType, const vistle::message::uuid_t &refUuid)
 {
+    using vistle::message::SendText;
+
     QString t = QString::fromStdString(text);
     while (t.endsWith('\n'))
         t.chop(1);
+    if (textType == SendText::Cerr || textType == SendText::Cout || textType == SendText::Clog || !isHtml(t)) {
+        auto lines = t.split("\n");
+        for (auto &l: lines) {
+            l = l.toHtmlEscaped();
+        }
+        t = lines.join("<br>");
+    }
     QString sender;
     if (senderId >= vistle::message::Id::ModuleBase) {
         sender = QString("<a href=\"%2\">%1_%2(%3)</a>")
@@ -183,6 +203,8 @@ void gui::VistleObserver::info(const std::string &text, vistle::message::SendTex
     QString msg = QString("%1: %2").arg(sender, t);
     emit info_s(msg, textType);
 
+    t += "<br>";
+    std::cerr << "HTML: " << t.toStdString() << std::endl;
     emit message_s(senderId, textType, t);
 }
 
@@ -194,6 +216,11 @@ void VistleObserver::updateStatus(int id, const std::string &text, vistle::messa
 void VistleObserver::status(int id, const std::string &text, vistle::message::UpdateStatus::Importance priority)
 {
     emit moduleStatus_s(id, QString::fromStdString(text), priority);
+}
+
+void VistleObserver::setName(int moduleId, const std::string &name)
+{
+    emit setName_s(moduleId, QString::fromStdString(name));
 }
 
 void VistleObserver::quitRequested()

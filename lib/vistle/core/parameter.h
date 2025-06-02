@@ -1,5 +1,5 @@
-#ifndef PARAMETER_H
-#define PARAMETER_H
+#ifndef VISTLE_CORE_PARAMETER_H
+#define VISTLE_CORE_PARAMETER_H
 
 #include <string>
 #include <sstream>
@@ -29,6 +29,13 @@ inline std::string to_string(const string &s)
 
 namespace vistle {
 
+class ParameterManager;
+namespace message {
+class SetParameter;
+class SetParameterChoices;
+class AddParameter;
+} // namespace message
+
 typedef boost::mpl::vector<Integer, Float, ParamVector, IntParamVector, std::string> Parameters;
 
 class V_COREEXPORT Parameter {
@@ -44,7 +51,7 @@ public:
                                         (ExistingFilename) // String
                                         (Directory) // String
                                         (ExistingDirectory) // String
-                                        (NewPathname) // String
+                                        (Restraint) // String
                                         (Boolean) // Integer
                                         (Choice) // Integer (fixed choice) and String (dynamic choice)
                                         (Slider) // Integer, Float
@@ -66,14 +73,8 @@ public:
 
     virtual Parameter *clone() const = 0;
 
-    void setPresentation(Presentation presentation);
-    void setDescription(const std::string &description);
-    void setChoices(const std::vector<std::string> &choices);
-    void setReadOnly(bool readOnly);
 
-    void setGroup(const std::string &group);
     const std::string &group() const;
-    void setGroupExpanded(bool expanded);
     bool isGroupExpanded() const;
 
     virtual operator std::string() const = 0;
@@ -86,7 +87,6 @@ public:
     const std::string &description() const;
     const std::vector<std::string> &choices() const;
     bool isReadOnly() const;
-    void setImmediate(bool immed);
     bool isImmediate() const;
 
 protected:
@@ -102,6 +102,19 @@ private:
     bool m_groupExpanded = true;
     bool m_immediate = false;
     bool m_readOnly = false;
+
+    friend class ParameterManager;
+    friend class message::SetParameter;
+    friend class message::SetParameterChoices;
+    friend class message::AddParameter;
+
+    void setPresentation(Presentation presentation);
+    void setDescription(const std::string &description);
+    void setChoices(const std::vector<std::string> &choices);
+    void setReadOnly(bool readOnly);
+    void setImmediate(bool immed);
+    void setGroupExpanded(bool expanded);
+    void setGroup(const std::string &group);
 };
 
 template<typename T>
@@ -306,8 +319,7 @@ V_ENUM_OUTPUT_OP(Type, Parameter)
 V_ENUM_OUTPUT_OP(Presentation, Parameter)
 V_ENUM_OUTPUT_OP(RangeType, Parameter)
 
-std::shared_ptr<Parameter> V_COREEXPORT getParameter(int moduleId, const std::string &paramName, Parameter::Type type,
-                                                     Parameter::Presentation presentation);
+std::shared_ptr<Parameter> V_COREEXPORT getParameter(int moduleId, const std::string &paramName, Parameter::Type type);
 
 
 } // namespace vistle

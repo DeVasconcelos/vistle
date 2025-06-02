@@ -1,14 +1,12 @@
+#ifndef VISTLE_COVER_PLUGIN_RHRCLIENT_RHRCLIENT_H
+#define VISTLE_COVER_PLUGIN_RHRCLIENT_RHRCLIENT_H
+
 /**\file
  * \brief RhrClient plugin class
  * 
  * \author Martin Aumüller <aumueller@hlrs.de>
  * \author (c) 2013, 2014 HLRS
- *
- * \copyright GPL2+
  */
-
-#ifndef RHR_CLIENT_H
-#define RHR_CLIENT_H
 
 #include <string>
 #include <memory>
@@ -91,7 +89,7 @@ private:
     std::vector<vistle::matricesMsg> gatherAllMatrices();
 
     //! server connection
-    boost::asio::io_service m_io;
+    boost::asio::io_context m_io;
     bool m_clientsChanged = false;
 
     int m_requestedTimestep, m_visibleTimestep, m_numRemoteTimesteps;

@@ -1,16 +1,9 @@
-#ifndef VISTLE_ARCHIVES_CONFIG_H
-#define VISTLE_ARCHIVES_CONFIG_H
+#ifndef VISTLE_CORE_ARCHIVES_CONFIG_H
+#define VISTLE_CORE_ARCHIVES_CONFIG_H
 
-//#define USE_INTROSPECTION_ARCHIVE
 //#define USE_BOOST_ARCHIVE
 #define USE_BOOST_ARCHIVE_MPI
 #define USE_YAS
-
-#ifdef USE_INTROSPECTION_ARCHIVE
-#ifndef USE_BOOST_ARCHIVE
-#define USE_BOOST_ARCHIVE
-#endif
-#endif
 
 #ifdef USE_BOOST_ARCHIVE
 #ifndef USE_BOOST_ARCHIVE_MPI
@@ -21,45 +14,13 @@
 #include <cstdlib>
 #include <vector>
 
-#include <vistle/util/enum.h>
 #include <vistle/util/buffer.h>
 
 #include "export.h"
 #include "index.h"
+#include "archives_compression_settings.h"
 
 namespace vistle {
-
-DEFINE_ENUM_WITH_STRING_CONVERSIONS(FieldCompressionMode, (Uncompressed)(Predict)(Zfp)(SZ))
-DEFINE_ENUM_WITH_STRING_CONVERSIONS(FieldCompressionZfpMode, (ZfpFixedRate)(ZfpPrecision)(ZfpAccuracy))
-DEFINE_ENUM_WITH_STRING_CONVERSIONS(FieldCompressionSzAlgo, (SzInterpLorenzo)(SzInterp)(SzLorenzoReg))
-DEFINE_ENUM_WITH_STRING_CONVERSIONS(FieldCompressionSzError, (SzRel)(SzAbs)(SzAbsAndRel)(SzAbsOrRel)(SzPsnr)(SzL2))
-
-struct CompressionSettings {
-    static constexpr const char *p_mode = "field_compression";
-    FieldCompressionMode mode = Uncompressed;
-
-    static constexpr const char *p_zfpMode = "zfp_mode";
-    FieldCompressionZfpMode zfpMode = ZfpFixedRate;
-    static constexpr const char *p_zfpRate = "zfp_rate";
-    double zfpRate = 16.;
-    static constexpr const char *p_zfpPrecision = "zfp_precision";
-    int zfpPrecision = 8;
-    static constexpr const char *p_zfpAccuracy = "zfp_accuracy";
-    double zfpAccuracy = 1e-20;
-
-    static constexpr const char *p_szAlgo = "sz_algo";
-    FieldCompressionSzAlgo szAlgo = SzInterpLorenzo;
-    static constexpr const char *p_szError = "sz_error_control";
-    FieldCompressionSzError szError = SzRel;
-    static constexpr const char *p_szAbsError = "sz_abs_error";
-    double szAbsError = 1e-3;
-    static constexpr const char *p_szRelError = "sz_rel_error";
-    double szRelError = 1e-4;
-    static constexpr const char *p_szPsnrError = "sz_psnr_error";
-    double szPsnrError = 80;
-    static constexpr const char *p_szL2Error = "sz_l2_error";
-    double szL2Error = 1e-1;
-};
 
 namespace detail {
 template<class Archive>
@@ -113,10 +74,8 @@ wrap_array(T *t, bool exact, S nx, S ny = 1, S nz = 1)
 #ifdef USE_BOOST_ARCHIVE
 #include <boost/serialization/nvp.hpp>
 #include <boost/serialization/array.hpp>
-#if BOOST_VERSION >= 106400
 #include <boost/serialization/array_wrapper.hpp>
 #include <boost/serialization/array_optimization.hpp>
-#endif
 
 namespace vistle {
 class boost_oarchive;
@@ -152,13 +111,8 @@ struct archive_helper<boost_tag> {
         return boost::serialization::make_nvp(name, obj);
     }
 
-#if BOOST_VERSION > 105500
     template<class T>
     using ArrayWrapper = const boost::serialization::array_wrapper<T>;
-#else
-    template<class T>
-    using ArrayWrapper = const boost::serialization::array<T>;
-#endif
     template<class T, class S>
     static ArrayWrapper<T> wrap_array(T *t, bool exact, S nx, S ny, S nz)
     {
@@ -278,10 +232,6 @@ struct archive_helper<yas_tag> {
 #endif
 
 namespace vistle {
-#ifdef USE_INTROSPECTION_ARCHIVE
-class FindObjectReferenceOArchive;
-#endif
-
 #if defined(USE_YAS)
 typedef yas_oarchive oarchive;
 typedef yas_iarchive iarchive;
@@ -456,19 +406,8 @@ public: \
 #define ARCHIVE_REGISTRATION_YAS_INLINE
 #define ARCHIVE_REGISTRATION_YAS_IMPL(ObjType, prefix)
 #endif
-#ifdef USE_INTROSPECTION_ARCHIVE
-#define ARCHIVE_REGISTRATION_INTROSPECT \
-    void save(FindObjectReferenceOArchive &ar) const override \
-    { \
-        const_cast<ObjType *>(this)->serialize(ar, 0); \
-    }
-#else
-#define ARCHIVE_REGISTRATION_INTROSPECT
-#endif
-#define ARCHIVE_REGISTRATION(override) \
-    ARCHIVE_REGISTRATION_BOOST(override) ARCHIVE_REGISTRATION_YAS(override) ARCHIVE_REGISTRATION_INTROSPECT
-#define ARCHIVE_REGISTRATION_INLINE \
-    ARCHIVE_REGISTRATION_BOOST_INLINE ARCHIVE_REGISTRATION_YAS_INLINE ARCHIVE_REGISTRATION_INTROSPECT
+#define ARCHIVE_REGISTRATION(override) ARCHIVE_REGISTRATION_BOOST(override) ARCHIVE_REGISTRATION_YAS(override)
+#define ARCHIVE_REGISTRATION_INLINE ARCHIVE_REGISTRATION_BOOST_INLINE ARCHIVE_REGISTRATION_YAS_INLINE
 #define ARCHIVE_REGISTRATION_IMPL(ObjType, prefix) \
     ARCHIVE_REGISTRATION_BOOST_IMPL(ObjType, prefix) ARCHIVE_REGISTRATION_YAS_IMPL(ObjType, prefix)
 

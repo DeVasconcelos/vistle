@@ -1,11 +1,14 @@
 /.envrc
+/.release
+/.debug
+/.buildtype
+/.spack
+/.flavor
 /scratch
 /build
 /build-*
 /CMakeLists.txt.user*
 /compile_commands.json
-/.release
-/.debug
 /test
 /*.log
 /*.vsl

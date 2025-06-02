@@ -1,5 +1,5 @@
-#ifndef GUI_PORT_H
-#define GUI_PORT_H
+#ifndef VISTLE_GUI_PORT_H
+#define VISTLE_GUI_PORT_H
 
 #include <QGraphicsItem>
 #include <QAction>
@@ -19,7 +19,8 @@ class Port: public QObject, public QGraphicsRectItem {
     typedef QGraphicsRectItem Base;
 
 public:
-    static const double portSize;
+    static double portSize;
+    static void configure();
 
     enum Type {
         Parameter,
@@ -41,7 +42,7 @@ public:
 
     bool operator<(const Port &other) const;
     bool operator==(const Port &other) const;
-    void setInfo(QString info);
+    void setInfo(QString info, int type);
 
 signals:
     void clicked(Port *port);
@@ -72,10 +73,11 @@ private:
     int m_moduleId = 0;
     QString m_name;
     QString m_info;
+    QString m_type, m_mapped, m_geometry, m_mapping;
     QString m_tooltip;
 };
 
 } //namespace gui
 
 Q_DECLARE_METATYPE(gui::Port::Type)
-#endif // VSLOT_H
+#endif

@@ -1,5 +1,5 @@
-#ifndef POINTS_H
-#define POINTS_H
+#ifndef VISTLE_CORE_POINTS_H
+#define VISTLE_CORE_POINTS_H
 
 
 #include "coords.h"
@@ -13,7 +13,7 @@ public:
     typedef Coords Base;
     std::set<Object::const_ptr> referencedObjects() const override;
 
-    Points(const size_t numPoints, const Meta &meta = Meta());
+    Points(size_t numPoints, const Meta &meta = Meta());
 
     Index getNumPoints();
     Index getNumPoints() const;

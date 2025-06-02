@@ -7,6 +7,7 @@
 #include "layergrid_impl.h"
 #include "celltree_impl.h"
 #include "validate.h"
+#include "shm_obj_ref_impl.h"
 
 //#define INTERPOL_DEBUG
 
@@ -55,7 +56,7 @@ bool LayerGrid::checkImpl(std::ostream &os, bool quick) const
     }
 
     for (int c = 0; c < 2; c++) {
-        VALIDATE(d()->min[c] <= d()->max[c]);
+        VALIDATE(d()->min[c] != d()->max[c] || getNumDivisions(c) <= 1);
     }
 
     VALIDATE_SUB(normals());
@@ -176,7 +177,7 @@ LayerGrid::Celltree::const_ptr LayerGrid::getCelltree() const
 {
     if (m_celltree)
         return m_celltree;
-    Data::mutex_lock_type lock(d()->mutex);
+    Data::mutex_lock_type lock(d()->attachment_mutex);
     if (!hasAttachment("celltree")) {
         refresh();
         createCelltree(m_numDivisions);
@@ -284,7 +285,13 @@ std::pair<Vector3, Vector3> LayerGrid::getBounds() const
     }
 
     auto mm = Base::getMinMax();
-    return std::make_pair(Vector3(m_min[0], m_min[1], mm.first[0]), Vector3(m_max[0], m_max[1], mm.second[0]));
+    Vector3 min(m_min[0], m_min[1], mm.first[0]);
+    Vector3 max(m_max[0], m_max[1], mm.second[0]);
+    for (int c = 0; c < 3; ++c) {
+        if (min[c] > max[c])
+            std::swap(min[c], max[c]);
+    }
+    return std::make_pair(min, max);
 }
 
 Normals::const_ptr LayerGrid::normals() const
@@ -320,11 +327,11 @@ std::vector<Vector3> LayerGrid::cellCorners(Index elem) const
     const Scalar *z = &this->z()[0];
     auto n = cellCoordinates(elem, m_numDivisions);
     auto cl = cellVertices(elem, m_numDivisions);
-    std::vector<Vector3> corners(cl.size());
+    std::vector<Vector3> corners;
+    corners.reserve(cl.size());
     for (unsigned i = 0; i < cl.size(); ++i) {
-        corners[i][0] = m_min[0] + (n[0] + i % 2) * m_dist[0];
-        corners[i][1] = m_min[1] + (n[1] + ((i + 1) / 2) % 2) * m_dist[1];
-        corners[i][2] = z[cl[i]];
+        corners.emplace_back(m_min[0] + (n[0] + i % 2) * m_dist[0], m_min[1] + (n[1] + ((i + 1) / 2) % 2) * m_dist[1],
+                             z[cl[i]]);
     }
 
     return corners;

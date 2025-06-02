@@ -1,5 +1,5 @@
-#ifndef DELAUNAYTRIANGULATOR_H
-#define DELAUNAYTRIANGULATOR_H
+#ifndef VISTLE_DELAUNAYTRIANGULATOR_DELAUNAYTRIANGULATOR_H
+#define VISTLE_DELAUNAYTRIANGULATOR_DELAUNAYTRIANGULATOR_H
 
 /*
 Generate an unstructured grid from vertices using the 3D Delaunay Triangulator TetGen
@@ -20,6 +20,7 @@ public:
 
 private:
     bool compute() override;
+    bool changeParameter(const vistle::Parameter *param) override;
     template<unsigned Dim>
     vistle::Object::ptr calculateGrid(vistle::Points::const_ptr points,
                                       typename vistle::Vec<vistle::Scalar, Dim>::const_ptr data) const;

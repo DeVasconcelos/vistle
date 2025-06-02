@@ -45,24 +45,22 @@ if(NOT VISTLE_USE_MPI)
         mpi-serial/info.c)
     target_compile_definitions(vistle_mpi PRIVATE FORTRAN_SAME)
     target_compile_definitions(vistle_mpi PRIVATE MPI_NO_FORTRAN)
+    target_compile_definitions(vistle_mpi PRIVATE _XOPEN_SOURCE=600) # for gethostname on Linux despite -std=c99
     target_include_directories(vistle_mpi PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mpi-serial> $<INSTALL_INTERFACE:include>)
-
+    if(WIN32)
+        target_link_libraries(vistle_mpi PRIVATE ws2_32)
+    endif()
     add_library(MPI::MPI_C ALIAS vistle_mpi)
+    add_library(MPI::MPI_CXX ALIAS vistle_mpi)
 endif()
 
 if(BOOST_MPI_DIR)
     include(boost-mpi.cmake)
 endif()
 
-if(CRAY)
-    set(BUILD_SHARED_LIBS
-        OFF
-        CACHE INTERNAL "")
-else()
-    set(BUILD_SHARED_LIBS
-        ${VISTLE_BUILD_SHARED}
-        CACHE INTERNAL "")
-endif()
+set(BUILD_SHARED_LIBS
+    ${VISTLE_BUILD_SHARED}
+    CACHE INTERNAL "")
 
 if(NOT BUILD_SHARED_LIBS)
     set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
@@ -78,6 +76,29 @@ if(USE_SZ3)
     add_subdirectory(sz3)
 endif()
 
+if(USE_BIGWHOOP)
+    include_directories(${BIGWHOOP_INCLUDE_DIRS})
+
+    add_subdirectory(BigWhoop)
+
+    # we must call this command (taken from BigWhoop/src/library/CMakeLists.txt)
+    # to generate the public header file for BigWhoop
+    execute_process(
+        COMMAND python3 public_header.py ${PYTHON_ARGUMENT}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/BigWhoop
+        RESULT_VARIABLE result
+        ERROR_VARIABLE error_output)
+    # enable POSIX features required by BigWhoop
+    target_compile_definitions(bwclib PRIVATE _POSIX_C_SOURCE=200809L)
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        find_package(OpenMP)
+        if(OpenMP_CXX_FOUND)
+            target_link_libraries(bwclib PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endif()
+endif()
+
 if(VISTLE_INTERNAL_ZFP)
     set(BUILD_TESTING
         OFF
@@ -89,6 +110,7 @@ if(VISTLE_INTERNAL_ZFP)
         "vistle_"
         CACHE STRING "Prefix to prepend to the output library name")
     mark_as_advanced(ZFP_LIBRARY_PREFIX)
+    set(ZFP_WITH_OPENMP ${VISTLE_USE_OPENMP})
     set(CMAKE_INSTALL_INCLUDEDIR include/vistle/3rdparty)
     add_subdirectory(zfp)
 endif()
@@ -96,63 +118,94 @@ endif()
 set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
 if(NOT VISTLE_GUI_ONLY)
-    if(VISTLE_INTERNAL_VTKM)
+    if(VISTLE_INTERNAL_VISKORES)
         #
-        # VTK-m
+        # Viskores
         #
-        #set(VTKm_NO_ASSERT ON)
-        set(VTKm_NO_DEPRECATED_VIRTUAL ON)
-        set(VTKm_ENABLE_MPI OFF)
-        #self.define_from_variant("VTKm_ENABLE_OPENMP", "openmp"),
-        set(VTKm_ENABLE_DEVELOPER_FLAGS OFF)
-        set(VTKm_ENABLE_RENDERING OFF)
-        set(VTKm_ENABLE_TESTING OFF)
-        set(VTKm_ENABLE_TESTING_LIBRARY OFF)
-        set(VTKm_INSTALL_EXAMPLES OFF)
-        set(VTKm_ENABLE_BENCHMARKS OFF)
-        set(VTKm_ENABLE_DOCUMENTATION OFF)
-        set(VTKm_ENABLE_EXAMPLES OFF)
-        set(VTKm_ENABLE_CPACK OFF)
-        set(VTKm_USE_64BIT_IDS ${VISTLE_64BIT_INDICES})
-        #set(VTKm_USE_DEFAULT_TYPES_FOR_ASCENT", "ascent_types"),
-        set(VTKm_USE_DOUBLE_PRECISION ${VISTLE_DOUBLE_PRECISION})
+        #set(Viskores_NO_ASSERT ON)
+        set(Viskores_NO_DEPRECATED_VIRTUAL ON)
+        set(Viskores_ENABLE_MPI OFF)
+        #self.define_from_variant("Viskores_ENABLE_OPENMP", "openmp"),
+        set(Viskores_ENABLE_DEVELOPER_FLAGS OFF)
+        set(Viskores_ENABLE_RENDERING OFF)
+        set(Viskores_ENABLE_TESTING OFF)
+        set(Viskores_ENABLE_TESTING_LIBRARY OFF)
+        set(Viskores_INSTALL_EXAMPLES OFF)
+        set(Viskores_ENABLE_BENCHMARKS OFF)
+        set(Viskores_ENABLE_DOCUMENTATION OFF)
+        set(Viskores_ENABLE_EXAMPLES OFF)
+        set(Viskores_ENABLE_CPACK OFF)
+        set(Viskores_USE_64BIT_IDS ${VISTLE_64BIT_INDICES})
+        #set(Viskores_USE_DEFAULT_TYPES_FOR_ASCENT", "ascent_types"),
+        set(Viskores_USE_DOUBLE_PRECISION ${VISTLE_DOUBLE_PRECISION})
 
-        set(VTKm_ENABLE_TBB ${TBB_FOUND})
-        set(VTKm_ENABLE_CUDA ${VISTLE_CUDA_ENABLED})
-        set(VTKm_ENABLE_KOKKOS ${VISTLE_USE_KOKKOS})
+        set(Viskores_ENABLE_TBB ${TBB_FOUND})
+        set(Viskores_ENABLE_CUDA ${VISTLE_CUDA_ENABLED})
+        set(Viskores_ENABLE_KOKKOS ${VISTLE_USE_KOKKOS})
+        if(NOT ${Viskores_ENABLE_KOKKOS}
+           AND NOT ${Viskores_ENABLE_CUDA}
+           AND NOT ${Viskores_ENABLE_TBB})
+            set(Viskores_ENABLE_OPENMP ${VISTLE_USE_OPENMP})
+        endif()
 
-        #set(VTKm_INSTALL_LIB_DIR "${_vtk_build_LIBRARY_DESTINATION}")
-        #set(VTKm_INSTALL_INCLUDE_DIR "${_vtk_build_HEADERS_DESTINATION}/vtkvtkm/vtk-m")
+        #set(Viskores_INSTALL_LIB_DIR "${_vtk_build_LIBRARY_DESTINATION}")
+        #set(Viskores_INSTALL_INCLUDE_DIR "${_vtk_build_HEADERS_DESTINATION}/vtkviskores/viskores")
         #if (DEFINED _vtk_build_LIBRARY_NAME_SUFFIX)
-        #  set(VTKm_CUSTOM_LIBRARY_SUFFIX "-${_vtk_build_LIBRARY_NAME_SUFFIX}")
+        #  set(Viskores_CUSTOM_LIBRARY_SUFFIX "-${_vtk_build_LIBRARY_NAME_SUFFIX}")
         #endif ()
-        #set(VTKm_EXECUTABLE_OUTPUT_PATH "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
-        #set(VTKm_LIBRARY_OUTPUT_PATH "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
-        set(VTKm_BUILD_CMAKE_BASE_DIR "${CMAKE_BINARY_DIR}")
-        #set(VTKm_INSTALL_CONFIG_DIR "${_vtk_build_CMAKE_DESTINATION}/vtkm")
-        #set(VTKm_INSTALL_CMAKE_MODULE_DIR "${VTKm_INSTALL_CONFIG_DIR}/cmake")
-        # Currently VTK-m only installs its readme and license.
-        #set(VTKm_INSTALL_SHARE_DIR "${_vtk_build_LICENSE_DESTINATION}/vtkvtkm")
+        #set(Viskores_EXECUTABLE_OUTPUT_PATH "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+        #set(Viskores_LIBRARY_OUTPUT_PATH "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
+        set(Viskores_BUILD_CMAKE_BASE_DIR "${CMAKE_BINARY_DIR}")
+        #set(Viskores_INSTALL_CONFIG_DIR "${_vtk_build_CMAKE_DESTINATION}/viskores")
+        #set(Viskores_INSTALL_CMAKE_MODULE_DIR "${Viskores_INSTALL_CONFIG_DIR}/cmake")
+        # Currently Viskores only installs its readme and license.
+        #set(Viskores_INSTALL_SHARE_DIR "${_vtk_build_LICENSE_DESTINATION}/vtkviskores")
 
-        #set(VTKm_INSTALL_ONLY_LIBRARIES OFF)
+        #set(Viskores_INSTALL_ONLY_LIBRARIES OFF)
 
-        #set(VTKm_USE_DEFAULT_SYMBOL_VISIBILITY OFF)
-        set(VTKm_SKIP_LIBRARY_VERSIONS ON)
+        #set(Viskores_USE_DEFAULT_SYMBOL_VISIBILITY OFF)
+        set(Viskores_SKIP_LIBRARY_VERSIONS ON)
 
-        set(VTKm_DEFAULT_TYPES_HEADER "../../../VtkmDefaultTypesVistle.h.in")
+        set(Viskores_DEFAULT_TYPES_HEADER "../../../ViskoresDefaultTypesVistle.h.in")
 
-        add_subdirectory(vtk-m)
-        add_library(vtkm::cont ALIAS vtkm_cont)
-        add_library(vtkm::filter ALIAS vtkm_filter)
-        add_library(vtkm::worklet ALIAS vtkm_worklet)
-        #add_library(vtkm_io ALIAS vtkm::io)
-        #add_library(vtkm_rendering ALIAS vtkm::rendering)
-        #add_library(vtkm_source ALIAS vtkm::source)
-        #add_library(vtkm_worklet ALIAS vtkm::worklet)
+        set(Viskores_MODULE_ENABLE_viskores_io "NO")
+        set(Viskores_MODULE_ENABLE_viskores_source "NO")
+
+        set(Viskores_GROUP_ENABLE_Filters "DONT_WANT")
+        set(Viskores_GROUP_ENABLE_FiltersCommon "DONT_WANT")
+        set(Viskores_MODULE_ENABLE_viskores_filter_contour "YES")
+        set(Viskores_MODULE_ENABLE_viskores_filter_field_conversion "YES")
+
+        set(Viskores_MODULE_ENABLE_viskores_filter_clean_grid "YES")
+        set(Viskores_MODULE_ENABLE_viskores_filter_connected_components "NO")
+        set(Viskores_MODULE_ENABLE_viskores_filter_density_esimate "NO")
+        set(Viskores_MODULE_ENABLE_viskores_filter_entity_extraction "YES")
+        set(Viskores_MODULE_ENABLE_viskores_filter_field_transform "NO")
+        set(Viskores_MODULE_ENABLE_viskores_filter_flow "NO")
+        set(Viskores_MODULE_ENABLE_viskores_filter_geometry_refinement "YES")
+        set(Viskores_MODULE_ENABLE_viskores_filter_image_processing "NO")
+        #set(Viskores_MODULE_ENABLE_viskores_filter_mesh_info "NO")
+        set(Viskores_MODULE_ENABLE_viskores_filter_multiblock "NO")
+        set(Viskores_MODULE_ENABLE_viskores_filter_resampling "NO")
+        set(Viskores_MODULE_ENABLE_viskores_filter_scalar_topology "NO")
+        set(Viskores_MODULE_ENABLE_viskores_filter_testing "NO")
+        set(Viskores_MODULE_ENABLE_viskores_filter_uncertainty "NO")
+        #set(Viskores_MODULE_ENABLE_viskores_filter_vector_analysis "NO")
+        set(Viskores_MODULE_ENABLE_viskores_filter_zfp "NO")
+
+        add_subdirectory(viskores)
+        add_library(viskores::cont ALIAS viskores_cont)
+        add_library(viskores::filter ALIAS viskores_filter)
+        add_library(viskores::worklet ALIAS viskores_worklet)
+        #add_library(viskores_io ALIAS viskores::io)
+        #add_library(viskores_rendering ALIAS viskores::rendering)
+        #add_library(viskores_source ALIAS viskores::source)
+        #add_library(viskores_worklet ALIAS viskores::worklet)
 
     endif()
 
     if(VISTLE_USE_MPI)
+        set(ICET_SUBMODULE TRUE)
         #
         # IceT
         #
@@ -202,8 +255,9 @@ if(NOT VISTLE_GUI_ONLY)
     #
     # pybind11
     #
-    set(PythonLibsNew_FIND_REQUIRED FALSE)
-    set(PythonLibsNew_FOUND TRUE)
+    set(PYBIND11_FINDPYTHON
+        TRUE
+        CACHE BOOL "")
     add_subdirectory(pybind11)
 endif()
 
@@ -224,13 +278,11 @@ endif()
 # vistle_find_package(Eigen3 REQUIRED)
 add_library(eigen INTERFACE)
 add_library(Eigen3::Eigen ALIAS eigen)
-set(EIGEN_DEFINITIONS "-DEIGEN_DEFAULT_DENSE_INDEX_TYPE=int")
+set(EIGEN_DEFINITIONS "-DEIGEN_DEFAULT_DENSE_INDEX_TYPE=int" "-DEIGEN_DONT_PARALLELIZE") # also disable OpenMP for eigen
 target_compile_definitions(eigen INTERFACE ${EIGEN_DEFINITIONS})
 #set(EIGEN3_INCLUDE_PATH "${PROJECT_SOURCE_DIR}/lib/3rdparty")
-target_include_directories(eigen INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}> $<INSTALL_INTERFACE:${INCLUDE_INSTALL_DIR}>)
-if(OpenMP_CXX_FOUND)
-    vistle_target_link_libraries(eigen INTERFACE OpenMP::OpenMP_CXX)
-endif()
+target_include_directories(eigen INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}> $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/eigen3
+                                           $<INSTALL_INTERFACE:${INCLUDE_INSTALL_DIR}> $<INSTALL_INTERFACE:${INCLUDE_INSTALL_DIR}>/eigen3)
 # Export as title case Eigen
 set_target_properties(eigen PROPERTIES EXPORT_NAME Eigen)
 vistle_export_library(eigen)

@@ -1,11 +1,12 @@
-#ifndef VISTLE_DATAPROXY_H
-#define VISTLE_DATAPROXY_H
+#ifndef VISTLE_NET_DATAPROXY_H
+#define VISTLE_NET_DATAPROXY_H
 
 #include <memory>
 #include <boost/asio.hpp>
 #include <mutex>
 #include <thread>
 #include <map>
+#include <atomic>
 #include <set>
 #include <functional>
 
@@ -26,13 +27,14 @@ class AddHub;
 class V_NETEXPORT DataProxy {
     typedef boost::asio::ip::tcp::acceptor acceptor;
     typedef boost::asio::ip::address address;
-    typedef boost::asio::io_service io_service;
+    typedef boost::asio::io_context io_context;
 
 public:
     typedef boost::asio::ip::tcp::socket tcp_socket;
 
     DataProxy(StateTracker &state, unsigned short basePort, bool changePort = true);
     ~DataProxy();
+    void cleanUp();
     void setHubId(int id);
     void setNumRanks(int size);
     void setBoostArchiveVersion(int ver);
@@ -48,17 +50,13 @@ private:
     DEFINE_ENUM_WITH_STRING_CONVERSIONS(EndPointType, (Local)(Remote))
 
     int idToHub(int id) const;
-    io_service &io();
     std::recursive_mutex m_mutex;
     int m_hubId;
     int m_numRanks = 0;
     StateTracker &m_stateTracker;
-    io_service m_io;
-#if BOOST_VERSION >= 106600
+    io_context &io();
+    io_context m_io;
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> m_workGuard;
-#else
-    std::shared_ptr<boost::asio::io_service::work> m_workGuard;
-#endif
     unsigned short m_port;
     acceptor m_acceptorv4, m_acceptorv6;
     std::vector<std::thread> m_threads;
@@ -70,13 +68,11 @@ private:
     std::map<int, ConnectionData> m_remoteDataSocket; // hub id -> socket
     int m_boost_archive_version = 0;
     int m_indexSize = 0, m_scalarSize = 0;
+    std::atomic<bool> m_shuttingDown{false};
     void startAccept(acceptor &a);
     void handleAccept(acceptor &a, const boost::system::error_code &error, std::shared_ptr<tcp_socket> sock);
-    void handleConnect(std::shared_ptr<tcp_socket> sock0, std::shared_ptr<tcp_socket> sock1,
-                       const boost::system::error_code &error);
     bool serveSocket(const message::Identify &id, std::shared_ptr<tcp_socket> sock);
     void startThread();
-    void cleanUp();
 
     bool answerIdentify(EndPointType type, std::shared_ptr<tcp_socket> sock, const vistle::message::Identify &id);
     bool answerLocalIdentify(std::shared_ptr<tcp_socket> sock, const vistle::message::Identify &id);

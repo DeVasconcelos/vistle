@@ -1,5 +1,5 @@
-#ifndef TRACER_H
-#define TRACER_H
+#ifndef VISTLE_TRACER_TRACER_H
+#define VISTLE_TRACER_TRACER_H
 
 #include <future>
 #include <vector>
@@ -20,11 +20,17 @@ DEFINE_ENUM_WITH_STRING_CONVERSIONS(TraceType,
 
 class BlockData;
 class Tracer;
+template<typename S>
+class Particle;
+template<typename S>
+class Integrator;
 
 class GlobalData {
-    friend class Particle;
+    friend class Particle<float>;
+    friend class Particle<double>;
+    friend class Integrator<float>;
+    friend class Integrator<double>;
     friend class Tracer;
-    friend class Integrator;
 
 public:
 private:
@@ -95,10 +101,14 @@ private:
     vistle::IntParameter *m_useCelltree;
     vistle::IntParameter *m_particlePlacement = nullptr;
     vistle::FloatParameter *m_simplificationError = nullptr;
+    vistle::IntParameter *m_verbose = nullptr;
     bool m_havePressure;
 
     bool m_haveTimeSteps = false;
 
+    std::vector<vistle::Index> m_stopReasonCount;
+    vistle::Index m_numTotalParticles = 0;
+    bool m_stopStatsPrinted = false;
     bool m_numStartpointsPrinted = false;
 };
 #endif

@@ -1,5 +1,5 @@
-#ifndef SCALARTOVEC_H
-#define SCALARTOVEC_H
+#ifndef VISTLE_SCALARTOVEC_SCALARTOVEC_H
+#define VISTLE_SCALARTOVEC_SCALARTOVEC_H
 
 #include <vistle/module/module.h>
 #include <vistle/core/vector.h>
@@ -16,7 +16,8 @@ private:
     virtual bool compute();
 
     vistle::Port *m_scalarIn[NumScalars];
-    vistle::Port *m_vecOut;
+    vistle::Port *m_vecOut = nullptr;
+    vistle::StringParameter *m_species = nullptr;
 };
 
 #endif

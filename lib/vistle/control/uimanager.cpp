@@ -13,6 +13,8 @@
 
 namespace vistle {
 
+#define CERR std::cerr << "UiManager: "
+
 UiManager::UiManager(Hub &hub, StateTracker &stateTracker)
 : m_hub(hub)
 , m_stateTracker(stateTracker)
@@ -34,7 +36,9 @@ bool UiManager::handleMessage(std::shared_ptr<boost::asio::ip::tcp::socket> sock
     std::shared_ptr<UiClient> sender;
     auto it = m_clients.find(sock);
     if (it == m_clients.end()) {
-        std::cerr << "UiManager: message from unknown UI" << std::endl;
+        if (m_hub.verbosity() >= Hub::Verbosity::Manager) {
+            CERR << "message from unknown UI" << std::endl;
+        }
     } else {
         sender = it->second;
     }
@@ -43,7 +47,9 @@ bool UiManager::handleMessage(std::shared_ptr<boost::asio::ip::tcp::socket> sock
     case MODULEEXIT: {
         if (!sender) {
             auto &exit = msg.as<ModuleExit>();
-            std::cerr << "UiManager: unknown UI on hub " << exit.senderId() << " quit" << std::endl;
+            if (m_hub.verbosity() >= Hub::Verbosity::Manager) {
+                CERR << "unknown UI on hub " << exit.senderId() << " quit" << std::endl;
+            }
         } else {
             sender->cancel();
             removeClient(sender);
@@ -54,7 +60,7 @@ bool UiManager::handleMessage(std::shared_ptr<boost::asio::ip::tcp::socket> sock
         auto quit = msg.as<Quit>();
         if (quit.id() == Id::Broadcast) {
             if (!sender) {
-                std::cerr << "UiManager: unknown UI quit" << std::endl;
+                CERR << "unknown UI quit" << std::endl;
             } else {
                 sender->cancel();
                 removeClient(sender);
@@ -78,6 +84,7 @@ void UiManager::sendMessage(const message::Message &msg, int id, const buffer *p
 {
     std::vector<std::shared_ptr<UiClient>> toRemove;
 
+    std::unique_lock lock(m_mutex);
     for (auto ent: m_clients) {
         if (id == message::Id::Broadcast || ent.second->id() == id) {
             if (!sendMessage(ent.second, msg, payload)) {
@@ -93,6 +100,7 @@ void UiManager::sendMessage(const message::Message &msg, int id, const buffer *p
 
 bool UiManager::sendMessage(std::shared_ptr<UiClient> c, const message::Message &msg, const buffer *payload) const
 {
+    std::unique_lock lock(m_mutex);
 #if BOOST_VERSION < 107000
     //FIXME is message reliably sent, e.g. also during shutdown, without polling?
     auto &ioService = c->socket()->get_io_service();
@@ -118,6 +126,7 @@ void UiManager::disconnect()
         c.second->cancel();
     }
 
+    std::unique_lock lock(m_mutex);
     m_clients.clear();
 }
 
@@ -125,10 +134,12 @@ void UiManager::addClient(std::shared_ptr<boost::asio::ip::tcp::socket> sock)
 {
     std::shared_ptr<UiClient> c(new UiClient(*this, m_uiCount, sock));
 
+    std::unique_lock lock(m_mutex);
     m_clients.insert(std::make_pair(sock, c));
 
-    std::cerr << "UiManager: new UI " << m_uiCount << " connected, now have " << m_clients.size() << " connections"
-              << std::endl;
+    if (m_hub.verbosity() >= Hub::Verbosity::Manager) {
+        CERR << "new UI " << m_uiCount << " connected, now have " << m_clients.size() << " connections" << std::endl;
+    }
     ++m_uiCount;
 
     if (m_requestQuit) {
@@ -136,19 +147,24 @@ void UiManager::addClient(std::shared_ptr<boost::asio::ip::tcp::socket> sock)
     } else {
         sendMessage(c, message::SetId(c->id()));
 
-        sendMessage(c, message::LockUi(m_locked));
-
-        auto state = m_stateTracker.getState();
-        for (auto &m: state) {
+        sendMessage(c, message::LockUi(true));
+        auto state = m_stateTracker.getLockedState();
+        for (auto &m: state.messages) {
             sendMessage(c, m.message, m.payload.get());
+        }
+        if (!m_locked) {
+            sendMessage(c, message::LockUi(m_locked));
         }
     }
 }
 
 bool UiManager::removeClient(std::shared_ptr<UiClient> c) const
 {
-    std::cerr << "UiManager: removing client " << c->id() << std::endl;
+    if (m_hub.verbosity() >= Hub::Verbosity::Manager) {
+        CERR << "removing client " << c->id() << std::endl;
+    }
 
+    std::unique_lock lock(m_mutex);
     for (auto &ent: m_clients) {
         if (ent.second == c) {
             if (!c->done()) {

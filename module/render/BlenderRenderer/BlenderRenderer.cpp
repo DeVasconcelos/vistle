@@ -32,7 +32,7 @@ BlenderRenderObject::BlenderRenderObject(int senderId, const std::string &sender
 
 
 BlenderRenderer::BlenderRenderer(const std::string &name, int moduleId, mpi::communicator comm)
-: vistle::Renderer(name, moduleId, comm), m_socket(m_ioService)
+: vistle::Renderer(name, moduleId, comm), m_socket(m_ioContext)
 {
     m_fastestObjectReceivePolicy = message::ObjectReceivePolicy::Distribute;
     setObjectReceivePolicy(m_fastestObjectReceivePolicy);
@@ -53,15 +53,14 @@ bool BlenderRenderer::tryConnect(bool retry)
 
     boost::system::error_code ec;
     do {
-        asio::ip::tcp::resolver resolver(m_ioService);
-        asio::ip::tcp::resolver::query query(host, std::to_string(blender_port),
-                                             asio::ip::tcp::resolver::query::numeric_service);
-        asio::ip::tcp::resolver::iterator endpoint_iterator = resolver.resolve(query, ec);
+        asio::ip::tcp::resolver resolver(m_ioContext);
+        auto endpoints =
+            resolver.resolve(host, std::to_string(blender_port), asio::ip::tcp::resolver::numeric_service, ec);
         if (ec) {
             return false;
             break;
         }
-        asio::connect(m_socket, endpoint_iterator, ec);
+        asio::connect(m_socket, endpoints, ec);
         if (!ec) {
             m_connected = true;
         } else if (ec == boost::system::errc::connection_refused) {
@@ -261,7 +260,7 @@ std::shared_ptr<vistle::RenderObject> BlenderRenderer::addObject(int senderId, c
         }
 
         int num_values = 0; // vert_values
-        float *values_array;
+        float *values_array = nullptr;
         bool is_valid_tex = false;
         if (texture) {
             auto tex1D = vistle::Texture1D::as(texture);
@@ -432,9 +431,9 @@ bool BlenderRenderer::addColorMap(const std::string &species, Object::const_ptr 
     //    cmap.image->setImage(texture->getWidth(), 1, 1, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, &texture->pixels()[0], osg::Image::NO_DELETE);
     //    cmap.image->dirty();
     //
-    //    cmap.setBlendWithMaterial(texture->hasAttribute("_blend_with_material"));
+    //    cmap.setBlendWithMaterial(texture->hasAttribute(attribute::BlendWithMaterial));
     //
-    //    std::string plugin = texture->getAttribute("_plugin");
+    //    std::string plugin = texture->getAttribute(attribute::Plugin);
     //    if (!plugin.empty())
     //        cover->addPlugin(plugin.c_str());
     //
@@ -456,7 +455,7 @@ bool BlenderRenderer::addColorMap(const std::string &species, Object::const_ptr 
     //        return true;
     //    }
     //
-    //    auto att = texture->getAttribute("_colormap");
+    //    auto att = texture->getAttribute(attribute::ColorMap);
     //    if (att.empty()) {
     //        ro->removeAttribute("COLORMAP");
     //    } else {

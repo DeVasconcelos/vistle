@@ -1,14 +1,12 @@
+#ifndef VISTLE_RHR_RHRSERVER_H
+#define VISTLE_RHR_RHRSERVER_H
+
 /**\file
  * \brief RhrServer class
  * 
  * \author Martin Aumüller <aumueller@hlrs.de>
  * \author (c) 2012, 2013, 2014 HLRS
- *
- * \copyright LGPL2+
  */
-
-#ifndef RHR_SERVER_H
-#define RHR_SERVER_H
 
 #include <vector>
 #include <deque>
@@ -240,7 +238,7 @@ public:
                    const std::vector<std::string> &removed);
 
 private:
-    asio::io_service m_io;
+    asio::io_context m_io;
     asio::ip::tcp::acceptor m_acceptorv4, m_acceptorv6;
     bool m_listen = false;
     std::shared_ptr<asio::ip::tcp::socket> m_clientSocket;

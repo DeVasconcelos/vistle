@@ -1,4 +1,6 @@
 #include "object.h"
+#include "shm_obj_ref.h"
+#include "shm_obj_ref_impl.h"
 #include "object_impl.h"
 
 #include "shm.h"
@@ -18,6 +20,8 @@
 #include <vistle/util/exception.h>
 
 namespace mpl = boost::mpl;
+
+//#define REFERENCE_DEBUG
 
 #ifdef USE_BOOST_ARCHIVE
 namespace boost {
@@ -100,9 +104,6 @@ const char *Object::toString(Type v)
         V_OBJECT_CASE(LAYERGRID, LayerGrid)
 
         V_OBJECT_CASE(VERTEXOWNERLIST, VertexOwnerList)
-        V_OBJECT_CASE(CELLTREE1, Celltree1)
-        V_OBJECT_CASE(CELLTREE2, Celltree2)
-        V_OBJECT_CASE(CELLTREE3, Celltree3)
         V_OBJECT_CASE(NORMALS, Normals)
 
     default:
@@ -144,6 +145,11 @@ const char *Object::toString(Type v)
         if (std::string("uint8_t") == scalstr)
             scalstr = "Byte";
         snprintf(buf, sizeof(buf), "%s%d", scalstr, dim);
+        return buf;
+    }
+
+    if (v >= Object::CELLTREE) {
+        snprintf(buf, sizeof(buf), "Celltree");
     }
 
     return buf;
@@ -221,6 +227,8 @@ ObjectData::ObjectData(const Object::Type type, const std::string &n, const Meta
 : ShmData(ShmData::OBJECT, n)
 , type(type)
 , unresolvedReferences(0)
+, unresolvedArrayReferences(0)
+, unresolvedObjectReferences(0)
 , meta(m)
 , attributes(std::less<Key>(), Shm::the().allocator())
 , attachments(std::less<Key>(), Shm::the().allocator())
@@ -230,6 +238,8 @@ ObjectData::ObjectData(const Object::Data &o, const std::string &name, Object::T
 : ShmData(ShmData::OBJECT, name)
 , type(id == Object::UNKNOWN ? o.type : id)
 , unresolvedReferences(0)
+, unresolvedArrayReferences(0)
+, unresolvedObjectReferences(0)
 , meta(o.meta)
 , attributes(std::less<Key>(), Shm::the().allocator())
 , attachments(std::less<Key>(), Shm::the().allocator())
@@ -255,16 +265,70 @@ bool Object::Data::isComplete() const
     // a reference is only established upon return from Object::load
     //assert(unresolvedReferences==0 || refcount==0);
     //return refcount>0 && unresolvedReferences==0;
-    return unresolvedReferences == 0;
+#ifdef REFERENCE_DEBUG
+    std::cerr << "CHKREF"
+              << " in " << this->name << " (" << unresolvedReferences << "=" << unresolvedArrayReferences << "a+"
+              << unresolvedObjectReferences << "o)" << std::endl;
+#endif
+    return unresolvedReferences == 0 && !meta.isRestoring();
 }
 
-void ObjectData::referenceResolved(const std::function<void()> &completeCallback)
+void ObjectData::unresolvedReference(bool isArray, const std::string &arname, const std::string &shmname)
 {
-    //std::cerr << "reference (from " << unresolvedReferences << ") resolved in " << name << std::endl;
-    assert(unresolvedReferences > 0);
-    if (unresolvedReferences.fetch_sub(1) == 1 && completeCallback) {
-        completeCallback();
+    if (isArray) {
+        ++unresolvedArrayReferences;
+    } else {
+        ++unresolvedObjectReferences;
     }
+    ++unresolvedReferences;
+#ifdef REFERENCE_DEBUG
+    std::cerr << (isArray ? "ARRREF" : "OBJREF") << "++ in " << this->name << " (now " << unresolvedReferences << "="
+              << unresolvedArrayReferences << "a+" << unresolvedObjectReferences << "o) to " << arname << "->"
+              << shmname << std::endl;
+#endif
+}
+
+void ObjectData::referenceResolved(const std::function<void()> &completeCallback, bool isArray,
+                                   const std::string &arname, const std::string &shmname)
+{
+#ifdef REFERENCE_DEBUG
+    std::cerr << (isArray ? "ARRREF" : "OBJREF") << "-- in " << this->name << " (from " << unresolvedReferences << "="
+              << unresolvedArrayReferences << "a+" << unresolvedObjectReferences << "o) resolved by " << arname << "->"
+              << shmname << std::endl;
+#endif
+    if (isArray) {
+        assert(unresolvedArrayReferences > 0);
+        --unresolvedArrayReferences;
+    } else {
+        assert(unresolvedObjectReferences > 0);
+        --unresolvedObjectReferences;
+    }
+    assert(unresolvedReferences > 0);
+    //mutex_lock_type guard(object_mutex);
+    if (unresolvedReferences.fetch_sub(1) == 1) {
+        if (meta.isRestoring()) {
+#ifdef REFERENCE_DEBUG
+            std::cerr << "COMPLETED " << this->name << " by " << name << ", but still restoring" << std::endl;
+#endif
+        } else if (completeCallback) {
+#ifdef REFERENCE_DEBUG
+            std::cerr << "COMPLETED " << this->name << " with handler by " << name << std::endl;
+#endif
+            completeCallback();
+        } else {
+#ifdef REFERENCE_DEBUG
+            std::cerr << "COMPLETED " << this->name << " WITHOUT handler by " << name << std::endl;
+#endif
+        }
+    }
+}
+
+void ObjectData::printCompletionStatus(std::ostream &os) const
+{
+    bool complete = isComplete();
+    os << (complete ? "" : "NOT ") << "COMPLETE: " << this->name << " (unresolved=" << unresolvedReferences << "="
+       << unresolvedArrayReferences << "a+" << unresolvedObjectReferences << "o) "
+       << ", #ref=" << m_refcount << (meta.isRestoring() ? " (restoring)" : "") << std::endl;
 }
 
 #ifndef NO_SHMEM
@@ -350,12 +414,24 @@ Object::ptr Object::cloneType() const
 void Object::refresh() const
 {}
 
+namespace {
+bool isAttachment(Object::Type type)
+{
+    switch (type) {
+    case Object::VERTEXOWNERLIST:
+        return true;
+    default:
+        if (type >= Object::CELLTREE && type < Object::VERTEXOWNERLIST)
+            return true;
+        return false;
+    }
+}
+} // namespace
+
 bool Object::check(std::ostream &os, bool quick) const
 {
     VALIDATE(d()->refcount() > 0); // we are holding a reference
     VALIDATE(d()->isComplete()); // we are holding a reference
-
-    VALIDATE(d()->meta.creator() != -1);
 
     bool terminated = false;
     for (size_t i = 0; i < sizeof(shm_name_t); ++i) {
@@ -368,21 +444,26 @@ bool Object::check(std::ostream &os, bool quick) const
 
     VALIDATE(d()->type > UNKNOWN);
 
-    VALIDATE(d()->meta.numTimesteps() >= -1);
-    VALIDATE(d()->meta.timeStep() >= -1);
-    VALIDATE(d()->meta.numTimesteps() == -1 ||
-             (d()->meta.timeStep() >= 0 && d()->meta.timeStep() < d()->meta.numTimesteps()));
+    if (!isAttachment(getType())) {
+        VALIDATE(d()->meta.creator() != -1);
 
-    VALIDATE(d()->meta.animationStep() >= -1);
-    VALIDATE(d()->meta.animationStep() < d()->meta.numAnimationSteps() || d()->meta.numAnimationSteps() == -1);
+        VALIDATE(d()->meta.numTimesteps() >= -1);
+        VALIDATE(d()->meta.timeStep() >= -1);
+        VALIDATE(d()->meta.numTimesteps() == -1 ||
+                 (d()->meta.timeStep() >= -1 && d()->meta.timeStep() < d()->meta.numTimesteps()));
 
-    VALIDATE(d()->meta.iteration() >= -1);
+        VALIDATE(d()->meta.animationStep() >= -1);
+        VALIDATE(d()->meta.animationStep() < d()->meta.numAnimationSteps() || d()->meta.numAnimationSteps() == -1);
 
-    VALIDATE(d()->meta.numBlocks() >= -1);
-    VALIDATE(d()->meta.block() >= -1);
-    VALIDATE(d()->meta.numBlocks() == -1 || (d()->meta.block() >= 0 && d()->meta.block() < d()->meta.numBlocks()));
+        VALIDATE(d()->meta.iteration() >= -1);
 
-    VALIDATE(d()->meta.generation() >= -1);
+        VALIDATE(d()->meta.numBlocks() >= -1);
+        VALIDATE(d()->meta.block() >= -1);
+        VALIDATE(d()->meta.numBlocks() == -1 || (d()->meta.block() >= 0 && d()->meta.block() < d()->meta.numBlocks()));
+
+        VALIDATE(d()->meta.generation() >= -1);
+        VALIDATE(!d()->meta.isRestoring());
+    }
 
     if (quick)
         return true;
@@ -427,12 +508,14 @@ int ObjectData::ref() const
 
 int ObjectData::unref() const
 {
-    Shm::the().lockObjects();
-    int ref = ShmData::unref();
-    if (ref == 0) {
-        ObjectTypeRegistry::getDestroyer(type)(name);
-    }
-    Shm::the().unlockObjects();
+    int ref = 0;
+    auto lambda = [this, &ref]() {
+        ref = ShmData::unref();
+        if (ref == 0 && isComplete()) {
+            ObjectTypeRegistry::getDestroyer(type)(name);
+        }
+    };
+    Shm::the().atomicFunc(lambda);
     return ref;
 }
 
@@ -566,20 +649,6 @@ void Object::copyAttributes(Object::const_ptr src, bool replace)
     if (!src)
         return;
 
-    if (replace) {
-        auto &m = d()->meta;
-        auto &sm = src->meta();
-        m.setBlock(sm.block());
-        m.setNumBlocks(sm.numBlocks());
-        m.setTimeStep(sm.timeStep());
-        m.setNumTimesteps(sm.numTimesteps());
-        m.setRealTime(sm.realTime());
-        m.setAnimationStep(sm.animationStep());
-        m.setNumAnimationSteps(sm.numAnimationSteps());
-        m.setIteration(sm.iteration());
-        m.setTransform(sm.transform());
-    }
-
     d()->copyAttributes(src->d(), replace);
 }
 
@@ -619,6 +688,7 @@ void Object::Data::setAttributeList(const std::string &key, const std::vector<st
         attributes.insert(AttributeMapValueType(skey, AttributeList(Shm::the().allocator())));
     AttributeList &a = res.first->second;
     a.clear();
+    a.reserve(values.size());
     for (size_t i = 0; i < values.size(); ++i) {
         a.emplace_back(values[i].c_str(), Shm::the().allocator());
     }
@@ -628,6 +698,18 @@ void Object::Data::copyAttributes(const ObjectData *src, bool replace)
 {
     if (replace) {
         attributes = src->attributes;
+
+        auto &m = meta;
+        auto &sm = src->meta;
+        m.setBlock(sm.block());
+        m.setNumBlocks(sm.numBlocks());
+        m.setTimeStep(sm.timeStep());
+        m.setNumTimesteps(sm.numTimesteps());
+        m.setRealTime(sm.realTime());
+        m.setAnimationStep(sm.animationStep());
+        m.setNumAnimationSteps(sm.numAnimationSteps());
+        m.setIteration(sm.iteration());
+        m.setTransform(sm.transform());
     } else {
         const AttributeMap &a = src->attributes;
 
@@ -639,6 +721,7 @@ void Object::Data::copyAttributes(const ObjectData *src, bool replace)
                 AttributeList &dest = res.first->second;
                 if (replace)
                     dest.clear();
+                dest.reserve(dest.size() + values.size());
                 for (AttributeList::const_iterator ait = values.begin(); ait != values.end(); ++ait) {
                     dest.emplace_back(*ait);
                 }
@@ -675,6 +758,7 @@ std::vector<std::string> Object::Data::getAttributes(const std::string &key) con
     const AttributeList &a = it->second;
 
     std::vector<std::string> attrs;
+    attrs.reserve(a.size());
     for (AttributeList::const_iterator i = a.begin(); i != a.end(); ++i) {
         attrs.push_back(i->c_str());
     }
@@ -684,6 +768,7 @@ std::vector<std::string> Object::Data::getAttributes(const std::string &key) con
 std::vector<std::string> Object::Data::getAttributeList() const
 {
     std::vector<std::string> result;
+    result.reserve(attributes.size());
     for (AttributeMap::const_iterator it = attributes.begin(); it != attributes.end(); ++it) {
         auto key = it->first;
         result.push_back(key.c_str());
@@ -692,12 +777,12 @@ std::vector<std::string> Object::Data::getAttributeList() const
 }
 
 #ifdef NO_SHMEM
-std::recursive_mutex &Object::mutex() const
+std::recursive_mutex &Object::objectMutex() const
 #else
-boost::interprocess::interprocess_recursive_mutex &Object::mutex() const
+boost::interprocess::interprocess_recursive_mutex &Object::objectMutex() const
 #endif
 {
-    return d()->mutex;
+    return d()->object_mutex;
 }
 
 bool Object::addAttachment(const std::string &key, Object::const_ptr obj) const
@@ -727,7 +812,7 @@ bool Object::removeAttachment(const std::string &key) const
 
 bool Object::Data::hasAttachment(const std::string &key) const
 {
-    mutex_lock_type lock(mutex);
+    mutex_lock_type lock(attachment_mutex);
     const Key skey(key.c_str(), Shm::the().allocator());
     AttachmentMap::const_iterator it = attachments.find(skey);
     return it != attachments.end();
@@ -735,7 +820,7 @@ bool Object::Data::hasAttachment(const std::string &key) const
 
 Object::const_ptr ObjectData::getAttachment(const std::string &key) const
 {
-    mutex_lock_type lock(mutex);
+    mutex_lock_type lock(attachment_mutex);
     const Key skey(key.c_str(), Shm::the().allocator());
     AttachmentMap::const_iterator it = attachments.find(skey);
     if (it == attachments.end()) {
@@ -747,7 +832,7 @@ Object::const_ptr ObjectData::getAttachment(const std::string &key) const
 bool Object::Data::addAttachment(const std::string &key, Object::const_ptr obj)
 {
     {
-        mutex_lock_type lock(mutex);
+        mutex_lock_type lock(attachment_mutex);
         const Key skey(key.c_str(), Shm::the().allocator());
         AttachmentMap::const_iterator it = attachments.find(skey);
         if (it != attachments.end()) {
@@ -763,7 +848,7 @@ bool Object::Data::addAttachment(const std::string &key, Object::const_ptr obj)
 
 void Object::Data::copyAttachments(const ObjectData *src, bool replace)
 {
-    mutex_lock_type lock(mutex);
+    mutex_lock_type lock(attachment_mutex);
     const AttachmentMap &a = src->attachments;
 
     for (AttachmentMap::const_iterator it = a.begin(); it != a.end(); ++it) {
@@ -785,7 +870,7 @@ void Object::Data::copyAttachments(const ObjectData *src, bool replace)
 
 bool Object::Data::removeAttachment(const std::string &key)
 {
-    mutex_lock_type lock(mutex);
+    mutex_lock_type lock(attachment_mutex);
     const Key skey(key.c_str(), Shm::the().allocator());
     AttachmentMap::iterator it = attachments.find(skey);
     if (it == attachments.end()) {
@@ -796,11 +881,6 @@ bool Object::Data::removeAttachment(const std::string &key)
     attachments.erase(it);
 
     return true;
-}
-
-void ObjectData::unresolvedReference()
-{
-    ++unresolvedReferences;
 }
 
 const struct ObjectTypeRegistry::FunctionTable &ObjectTypeRegistry::getType(int id)

@@ -1,5 +1,5 @@
-#ifndef CELLTREE_IMPL_H
-#define CELLTREE_IMPL_H
+#ifndef VISTLE_CORE_CELLTREE_IMPL_H
+#define VISTLE_CORE_CELLTREE_IMPL_H
 
 #include "shm_array_impl.h"
 #include "vector.h"
@@ -15,6 +15,7 @@
 #endif
 
 #include "validate.h"
+#include <boost/mpl/find.hpp>
 
 namespace vistle {
 
@@ -46,10 +47,20 @@ struct Celltree<Scalar, Index, NumDimensions>::GlobalData {
     std::deque<NodeData> nodesToSplit;
 };
 
+namespace {
+template<typename T>
+unsigned celltreeTypeId()
+{
+    const size_t pos = boost::mpl::find<CelltreeNodeTypes, T>::type::pos::value;
+    static_assert(pos < boost::mpl::size<CelltreeNodeTypes>::value, "CelltreeNode type not found");
+    return pos;
+}
+} // namespace
+
 template<typename Scalar, typename Index, int NumDimensions>
 Object::Type Celltree<Scalar, Index, NumDimensions>::type()
 {
-    return (Object::Type)(Object::CELLTREE1 + NumDimensions - 1);
+    return (Object::Type)(Object::CELLTREE + celltreeTypeId<Node>());
 }
 
 template<typename Scalar, typename Index, int NumDimensions>
@@ -218,20 +229,34 @@ void Celltree<Scalar, Index, NumDimensions>::refine(const AABB *bounds, Celltree
     Scalar min_weight(smax);
     int best_dim = -1, best_bucket = -1;
     for (int d = 0; d < NumDimensions; ++d) {
-        if (crange[d] == 0)
+        auto range = crange[d];
+        if (range == 0)
             continue;
+        auto computeWeight = [nodeSize, range](Index nleft, Scalar wleft, Scalar wright) -> Scalar {
+            Index nright = nodeSize - nleft;
+            Scalar w = 0;
+            float nl = float(nleft) / float(nodeSize);
+            float nr = float(nright) / float(nodeSize);
+            if (FavorEqualSplits == 2.f) {
+                w += nl * nl * wleft;
+                w += nr * nr * wright;
+            } else {
+                w += std::pow(nl, FavorEqualSplits) * wleft;
+                w += std::pow(nr, FavorEqualSplits) * wright;
+            }
+            w /= range;
+            return w;
+        };
         Index nleft = 0;
         for (int split_b = 0; split_b < NumBuckets - 1; ++split_b) {
             nleft += bucket[split_b][d];
             assert(nodeSize >= nleft);
-            const Index nright = nodeSize - nleft;
+            if (nleft == 0 || nleft == nodeSize)
+                continue;
             Scalar weight =
-                std::pow(float(nleft) / float(nodeSize), FavorEqualSplits) * (bmax[split_b][d] - bmin[0][d]) +
-                std::pow(float(nright) / float(nodeSize), FavorEqualSplits) *
-                    (bmax[NumBuckets - 1][d] - bmin[split_b + 1][d]);
-            weight /= crange[d];
+                computeWeight(nleft, bmax[split_b][d] - bmin[0][d], bmax[NumBuckets - 1][d] - bmin[split_b + 1][d]);
             //std::cerr << "d=" << d << ", b=" << split_b << ", weight=" << weight << std::endl;
-            if (nleft > 0 && nright > 0 && weight < min_weight) {
+            if (weight < min_weight) {
                 min_weight = weight;
                 best_dim = d;
                 best_bucket = split_b;
@@ -479,7 +504,7 @@ Celltree<Scalar, Index, NumDimensions>::Data::Data(const Data &o, const std::str
 
 template<typename Scalar, typename Index, int NumDimensions>
 Celltree<Scalar, Index, NumDimensions>::Data::Data(const std::string &name, const size_t numCells, const Meta &meta)
-: Base::Data(Object::Type(Object::CELLTREE1 - 1 + NumDimensions), name, meta)
+: Base::Data(Object::Type(Object::CELLTREE + celltreeTypeId<Node>()), name, meta)
 {
     initData();
 

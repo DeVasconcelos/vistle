@@ -1,22 +1,15 @@
 [submodule "3rdparty/IceT"]
 	path = lib/3rdparty/IceT
-	url = https://gitlab.kitware.com/icet/icet.git
+	url = https://github.com/vistle/IceT.git
 	branch = master
 [submodule "3rdparty/qt-solutions"]
 	path = lib/3rdparty/qt-solutions
 	url = https://github.com/vistle/qt-solutions.git
 	branch = master
-[submodule "3rdparty/thrust"]
-	path = lib/3rdparty/thrust
-	url = https://github.com/nvidia/thrust.git
-	branch = main
 [submodule "3rdparty/boost-mpi"]
 	path = lib/3rdparty/boost-mpi
 	url = https://github.com/boostorg/mpi.git
 	branch = master
-[submodule "3rdparty/boost-mpi-1.60"]
-	path = lib/3rdparty/boost-mpi-1.60
-	url = https://github.com/boostorg/mpi.git
 [submodule "3rdparty/boost-mpi-1.69"]
 	path = lib/3rdparty/boost-mpi-1.69
 	url = https://github.com/boostorg/mpi.git
@@ -67,11 +60,9 @@
 [submodule "module/geometry/DelaunayTriangulator/tetgen"]
 	path = module/geometry/DelaunayTriangulator/tetgen
 	url = https://github.com/vistle/tetgen.git
-[submodule "sz3"]
-	url = https://github.com/szcompressor/SZ3.git
-[submodule "lib/3rdparty/vtk-m"]
-	path = lib/3rdparty/vtk-m
-	url = https://gitlab.kitware.com/vtk/vtk-m.git
+[submodule "lib/3rdparty/viskores"]
+	path = lib/3rdparty/viskores
+	url = https://github.com/Viskores/viskores.git
 [submodule "lib/3rdparty/mpi-serial"]
 	path = lib/3rdparty/mpi-serial
 	url = https://github.com/vistle/mpi-serial.git
@@ -81,3 +72,12 @@
 [submodule "lib/3rdparty/profile_nvtx"]
 	path = lib/3rdparty/profile_nvtx
 	url = https://github.com/NVIDIA/NVTX
+[submodule "module/read/ReadCsv/fast-cpp-csv-parser"]
+	path = module/read/ReadCsv/fast-cpp-csv-parser
+	url = https://github.com/ben-strasser/fast-cpp-csv-parser.git
+[submodule "lib/3rdparty/BigWhoop"]
+	path = lib/3rdparty/BigWhoop
+	url = https://github.com/ptvogler/BigWhoop.git
+[submodule "module/map/IsoSurface/cccl"]
+	path = module/map/IsoSurface/cccl
+	url = https://github.com/NVIDIA/cccl

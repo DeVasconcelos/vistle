@@ -17,13 +17,22 @@
 #include <QPainter>
 #include <QGraphicsSceneMouseEvent>
 
+#include <vistle/config/file.h>
+#include <vistle/config/value.h>
+
 namespace gui {
 
-const double Port::portSize = 14.;
+double Port::portSize = 14.;
 
 static QColor InColor(200, 30, 30);
 static QColor OutColor(200, 30, 30);
 static QColor ParamColor(30, 30, 200);
+
+void Port::configure()
+{
+    vistle::config::File config("gui");
+    portSize = *config.value<double>("module", "port_size", 14.);
+}
 
 Port::Port(const vistle::Port *port, Module *parent)
 : Base(parent)
@@ -180,6 +189,93 @@ void Port::paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWid
             painter->drawLine(QPointF(s, b), QPointF(b, s));
         }
     }
+
+    if (m_portType == Port::Output) {
+        QString text = m_mapped;
+        if (text.isEmpty()) {
+            text = m_type;
+        }
+
+        auto shortenType = [](QString text) {
+            if (text == "Empty") {
+                text = "";
+            }
+            if (text == "Points") {
+                text = ".";
+            }
+            if (text == "Lines") {
+                text = "-";
+            }
+            if (text == "Triangles") {
+                text = "△";
+            }
+            if (text == "Quads") {
+                text = "□";
+            }
+            if (text == "Polygons") {
+                text = "p";
+            }
+            if (text == "UniformGrid") {
+                text = "c";
+            }
+            if (text == "LayerGrid") {
+                text = "h";
+            }
+            if (text == "RectilinearGrid") {
+                text = "r";
+            }
+            if (text == "StructuredGrid") {
+                text = "s";
+            }
+            if (text == "UnstructuredGrid") {
+                text = "u";
+            }
+            if (text.startsWith("Texture")) {
+                text = "t";
+            }
+            if (text.startsWith("Scalar")) {
+                text = text.right(1);
+            }
+            if (text.startsWith("Index")) {
+                text = "x";
+            }
+            return text;
+        };
+
+        painter->setPen(Qt::black);
+
+        QString type = shortenType(text);
+
+        QFont font;
+        font.setBold(true);
+        font.setPointSize(font.pointSize() - 2);
+        QFontMetrics fm(font);
+        QRect typeR = fm.boundingRect(type);
+        float left = (Port::portSize - typeR.width()) / 2.;
+
+        QString geo = shortenType(m_geometry);
+        QRect geoR;
+        //float left = (Port::portSize + typeR.width()*3./4. - geoR.width()*2.) / 2.;
+        if (!geo.isEmpty()) {
+            QFont small = font;
+            small.setPointSize(font.pointSize() - 2);
+            QFontMetrics fm(small);
+            geoR = fm.boundingRect(geo);
+            left -= geoR.width() * 3. / 4.;
+
+            painter->setFont(small);
+            painter->drawText(QPointF(left + typeR.width() + geoR.width() / 4., (Port::portSize + typeR.height()) / 2.),
+                              geo);
+
+            painter->setFont(font);
+            QString mapping = m_mapping == "Vertex" ? "." : "";
+            if (!mapping.isEmpty()) {
+                painter->drawText(QPointF(left + typeR.width(), (Port::portSize - typeR.height() / 2.) / 2.), mapping);
+            }
+        }
+
+        painter->drawText(QPointF(left, (Port::portSize * 3. / 4. + typeR.height()) / 2.), type);
+    }
 }
 
 QPointF Port::scenePos() const
@@ -233,10 +329,27 @@ void Port::mouseMoveEvent(QGraphicsSceneMouseEvent *event)
     Base::mouseMoveEvent(event);
 }
 
-void Port::setInfo(QString text)
+void Port::setInfo(QString text, int type)
 {
-    m_info = text;
-    createTooltip();
+    using vistle::message::ItemInfo;
+    switch (type) {
+    case ItemInfo::Port:
+        m_info = text;
+        createTooltip();
+        break;
+    case ItemInfo::PortType:
+        m_type = text;
+        break;
+    case ItemInfo::PortMapped:
+        m_mapped = text;
+        break;
+    case ItemInfo::PortGeometry:
+        m_geometry = text;
+        break;
+    case ItemInfo::PortMapping:
+        m_mapping = text;
+        break;
+    }
 }
 
 void Port::createTooltip()

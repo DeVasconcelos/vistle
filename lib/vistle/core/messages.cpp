@@ -312,13 +312,13 @@ boost::asio::ip::address AddHub::address() const
 boost::asio::ip::address_v6 AddHub::addressV6() const
 {
     assert(m_addrType == IPv6);
-    return boost::asio::ip::address_v6::from_string(m_address.data());
+    return boost::asio::ip::make_address_v6(m_address.data());
 }
 
 boost::asio::ip::address_v4 AddHub::addressV4() const
 {
     assert(m_addrType == IPv4);
-    return boost::asio::ip::address_v4::from_string(m_address.data());
+    return boost::asio::ip::make_address_v4(m_address.data());
 }
 
 void AddHub::setNumRanks(int size)
@@ -611,7 +611,7 @@ int Kill::getModule() const
     return module;
 }
 
-Debug::Debug(const int m, Debug::Request req): m_module(m), m_request(req)
+Debug::Debug(const int m, Debug::Request req, Debug::SwitchAction act): m_module(m), m_request(req), m_switchAction(act)
 {
     if (req == AttachDebugger) {
         assert(message::Id::isHub(m) || message::Id::isModule(m));
@@ -626,6 +626,12 @@ int Debug::getModule() const
 Debug::Request Debug::getRequest() const
 {
     return static_cast<Request>(m_request);
+}
+
+Debug::SwitchAction Debug::getSwitchAction() const
+{
+    assert(m_request == SwitchOutputStreaming);
+    return static_cast<SwitchAction>(m_switchAction);
 }
 
 
@@ -648,7 +654,7 @@ const char *CloseConnection::reason() const
     return m_reason.data();
 }
 
-ModuleExit::ModuleExit(): forwarded(false)
+ModuleExit::ModuleExit(bool crashed): forwarded(false), crashed(crashed)
 {}
 
 void ModuleExit::setForwarded()
@@ -659,6 +665,11 @@ void ModuleExit::setForwarded()
 bool ModuleExit::isForwarded() const
 {
     return forwarded;
+}
+
+bool ModuleExit::isCrashed() const
+{
+    return crashed;
 }
 
 Screenshot::Screenshot(const std::string &filename, bool quit): m_quit(quit)
@@ -1079,12 +1090,12 @@ bool AddParameter::isGroupExpanded() const
 
 std::shared_ptr<Parameter> AddParameter::getParameter() const
 {
-    std::shared_ptr<Parameter> p = vistle::getParameter(senderId(), getName(), Parameter::Type(getParameterType()),
-                                                        Parameter::Presentation(getPresentation()));
+    std::shared_ptr<Parameter> p = vistle::getParameter(senderId(), getName(), Parameter::Type(getParameterType()));
     if (p) {
         p->setDescription(description());
         p->setGroup(group());
         p->setGroupExpanded(isGroupExpanded());
+        p->setPresentation(Parameter::Presentation(getPresentation()));
     } else {
         std::cerr << "AddParameter::getParameter: " << moduleName() << ":" << getName() << ": type "
                   << getParameterType() << " not handled" << std::endl;
@@ -1296,6 +1307,11 @@ SetParameter::SetParameter(int module, const std::string &n, const StringParamVe
     COPY_STRING(name, n);
     //FIXME
     //COPY_STRING(v_string, v);
+}
+
+void SetParameter::setName(const std::string &n)
+{
+    COPY_STRING(name, n);
 }
 
 void SetParameter::setInit()
@@ -1528,7 +1544,7 @@ SendText::SendText(const Message &inResponseTo)
 : m_textType(TextType::Error), m_referenceUuid(inResponseTo.uuid()), m_referenceType(inResponseTo.type())
 {}
 
-SendText::SendText(SendText::TextType type): m_textType(type), m_referenceType(INVALID)
+SendText::SendText(SendText::TextType type, size_t line): m_textType(type), m_referenceType(INVALID), m_lineNumber(line)
 {}
 
 SendText::TextType SendText::textType() const
@@ -1544,6 +1560,11 @@ Type SendText::referenceType() const
 uuid_t SendText::referenceUuid() const
 {
     return m_referenceUuid;
+}
+
+size_t SendText::lineNumber() const
+{
+    return m_lineNumber;
 }
 
 SendText::Payload::Payload() = default;
@@ -1771,13 +1792,13 @@ boost::asio::ip::address RequestTunnel::destAddr() const
 boost::asio::ip::address_v6 RequestTunnel::destAddrV6() const
 {
     assert(m_destType == IPv6);
-    return boost::asio::ip::address_v6::from_string(m_destAddr.data());
+    return boost::asio::ip::make_address_v6(m_destAddr.data());
 }
 
 boost::asio::ip::address_v4 RequestTunnel::destAddrV4() const
 {
     assert(m_destType == IPv4);
-    return boost::asio::ip::address_v4::from_string(m_destAddr.data());
+    return boost::asio::ip::make_address_v4(m_destAddr.data());
 }
 
 std::string RequestTunnel::destHost() const
@@ -1889,9 +1910,15 @@ const Meta &SendObject::meta() const
 
 Object::Type SendObject::objectType() const
 {
+    assert(!isArray());
     return static_cast<Object::Type>(m_objectType);
 }
 
+int SendObject::arrayType() const
+{
+    assert(isArray());
+    return m_objectType;
+}
 
 Meta SendObject::objectMeta() const
 {
@@ -2030,6 +2057,7 @@ std::ostream &operator<<(std::ostream &s, const Message &m)
     }
     case SETPARAMETER: {
         auto &mm = static_cast<const SetParameter &>(m);
+        s << ", mod: " << mm.getModule();
         s << ", name: " << mm.getName();
         s << ", type: " << Parameter::toString(mm.getParameterType());
         if (mm.isInitialization())
@@ -2078,6 +2106,11 @@ std::ostream &operator<<(std::ostream &s, const Message &m)
         s << ", id: " << mm.getModule();
         break;
     }
+    case MODULEEXIT: {
+        auto &mm = static_cast<const ModuleExit &>(m);
+        s << ", forwarded: " << mm.isForwarded() << ", crashed: " << mm.isCrashed();
+        break;
+    }
     case QUIT: {
         auto &mm = m.as<Quit>();
         s << ", id: " << mm.id();
@@ -2106,7 +2139,7 @@ std::ostream &operator<<(std::ostream &s, const Message &m)
     }
     case SENDTEXT: {
         auto &mm = static_cast<const SendText &>(m);
-        s << ", type: " << mm.textType();
+        s << ", type: " << mm.textType() << ", line#: " << mm.lineNumber();
         break;
     }
     case ITEMINFO: {
@@ -2156,6 +2189,16 @@ std::ostream &operator<<(std::ostream &s, const Message &m)
         auto &mm = static_cast<const Cover &>(m);
         s << ", mirror: " << mm.mirrorId() << ", sender: " << mm.sender() << ", sender type: " << mm.senderType()
           << ", subtype: " << mm.subType();
+        break;
+    }
+    case LOCKUI: {
+        auto &mm = static_cast<const LockUi &>(m);
+        s << ", locked: " << mm.locked();
+        break;
+    }
+    case SETNAME: {
+        auto &mm = static_cast<const SetName &>(m);
+        s << ", module: " << mm.module() << ", name: " << mm.name();
         break;
     }
     default:

@@ -9,6 +9,7 @@
 #include "archives.h"
 #include <cassert>
 #include "validate.h"
+#include "shm_obj_ref_impl.h"
 
 namespace vistle {
 
@@ -47,7 +48,7 @@ bool UniformGrid::checkImpl(std::ostream &os, bool quick) const
 {
     for (int c = 0; c < 3; c++) {
         VALIDATE(d()->ghostLayers[c][0] + d()->ghostLayers[c][1] < getNumDivisions(c));
-        VALIDATE(d()->min[c] <= d()->max[c]);
+        VALIDATE(d()->min[c] != d()->max[c] || getNumDivisions(c) <= 1);
     }
 
     VALIDATE_SUB(normals());
@@ -138,7 +139,13 @@ Index UniformGrid::getNumVertices() const
 //-------------------------------------------------------------------------
 std::pair<Vector3, Vector3> UniformGrid::getBounds() const
 {
-    return std::make_pair(Vector3(m_min[0], m_min[1], m_min[2]), Vector3(m_max[0], m_max[1], m_max[2]));
+    Vector3 min(m_min[0], m_min[1], m_min[2]);
+    Vector3 max(m_max[0], m_max[1], m_max[2]);
+    for (int c = 0; c < 3; ++c) {
+        if (min[c] > max[c])
+            std::swap(min[c], max[c]);
+    }
+    return std::make_pair(min, max);
 }
 
 Normals::const_ptr UniformGrid::normals() const

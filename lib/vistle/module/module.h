@@ -1,5 +1,5 @@
-#ifndef MODULE_H
-#define MODULE_H
+#ifndef VISTLE_MODULE_MODULE_H
+#define VISTLE_MODULE_MODULE_H
 
 /**
  \class Module
@@ -95,8 +95,8 @@ public:
     template<class Type>
     typename Type::const_ptr expect(const std::string &port);
 
-    void addObject(Port *port, Object::ptr obj);
-    void addObject(const std::string &port, Object::ptr obj);
+    void addObject(Port *port, Object::const_ptr obj);
+    void addObject(const std::string &port, Object::const_ptr obj);
 
 protected:
     void addDependency(std::shared_ptr<BlockTask> dep);
@@ -111,7 +111,7 @@ protected:
     std::set<Port *> m_ports;
     std::map<std::string, Port *> m_portsByString;
     std::set<std::shared_ptr<BlockTask>> m_dependencies;
-    std::map<Port *, std::deque<Object::ptr>> m_objects;
+    std::map<Port *, std::deque<Object::const_ptr>> m_objects;
 
     std::mutex m_mutex;
     std::shared_future<bool> m_future;
@@ -155,7 +155,7 @@ public:
     ObjectCache::CacheMode cacheMode() const;
 
     Port *createInputPort(const std::string &name, const std::string &description, const int flags = 0);
-    Port *createOutputPort(const std::string &name, const std::string &descriptio, const int flags = 0);
+    Port *createOutputPort(const std::string &name, const std::string &description, const int flags = 0);
     bool destroyPort(const std::string &portName);
     bool destroyPort(const Port *port);
 
@@ -171,8 +171,8 @@ public:
     bool broadcastObjectViaShm(const mpi::communicator &comm, vistle::Object::const_ptr &object,
                                const std::string &objName, int root) const;
 
-    bool addObject(Port *port, vistle::Object::ptr object);
-    bool addObject(const std::string &portName, vistle::Object::ptr object);
+    bool addObject(Port *port, vistle::Object::const_ptr object);
+    bool addObject(const std::string &portName, vistle::Object::const_ptr object);
 
     ObjectList getObjects(const std::string &portName);
     bool hasObject(const Port *port) const;
@@ -209,7 +209,8 @@ public:
     bool sendMessageWithPayload(message::Message &message, Payload &payload) const;
 
     //! provide some information to be used as e.g. a tooltip
-    void setItemInfo(const std::string &text, const std::string &port = std::string());
+    void setItemInfo(const std::string &text, const std::string &port = std::string(),
+                     message::ItemInfo::InfoType type = message::ItemInfo::Unspecified);
 
     //! type should be a message::SendText::TextType
     void sendText(int type, const std::string &msg) const;
@@ -272,9 +273,6 @@ public:
     void updateMeta(vistle::Object::ptr object) const;
 
 protected:
-    bool passThroughObject(Port *port, vistle::Object::const_ptr object);
-    bool passThroughObject(const std::string &portName, vistle::Object::const_ptr object);
-
     virtual void setInputSpecies(const std::string &species); //< _species attribute on input has changed
 
     void setObjectReceivePolicy(int pol);
@@ -364,6 +362,8 @@ private:
 
     std::map<std::string, Port> outputPorts;
     std::map<std::string, Port> inputPorts;
+    std::map<std::string, int> m_portNumber;
+    int m_portCounter = 0;
 
     ObjectCache m_cache;
     ObjectCache::CacheMode m_defaultCacheMode;
@@ -373,9 +373,6 @@ private:
 
     IntParameter *m_useResultCache = nullptr;
     std::vector<ResultCacheBase *> m_resultCaches;
-
-    void updateOutputMode();
-    std::streambuf *m_origStreambuf = nullptr, *m_streambuf = nullptr;
 
     int m_traceMessages;
     bool m_benchmark;
@@ -400,8 +397,22 @@ private:
 
     unsigned m_hardware_concurrency = 1;
 
-    std::map<std::string, std::string> m_currentItemInfo;
+    struct InfoKey {
+        InfoKey(const std::string &port, message::ItemInfo::InfoType type = message::ItemInfo::Unspecified)
+        : port(port), type(type)
+        {}
+        std::string port;
+        message::ItemInfo::InfoType type = message::ItemInfo::Unspecified;
+        bool operator<(const InfoKey &other) const
+        {
+            if (port != other.port)
+                return port < other.port;
+            return type < other.type;
+        }
+    };
+    std::map<InfoKey, std::string> m_currentItemInfo;
     std::string m_inputSpecies;
+    int m_inputSpeciesPort = -1;
 
 #ifdef NDEBUG
     int m_validateObjects = 0; // Disable

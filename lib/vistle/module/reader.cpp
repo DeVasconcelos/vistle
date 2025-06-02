@@ -33,7 +33,6 @@ Parameter *Reader::addParameterGeneric(const std::string &name, std::shared_ptr<
     if (!m_firstFileBrowser && param) {
         auto pres = param->presentation();
         if (pres == Parameter::ExistingFilename || pres == Parameter::ExistingDirectory) {
-            std::cerr << "add browser param: " << name << std::endl;
             m_firstFileBrowser = param;
         }
     }
@@ -110,6 +109,11 @@ size_t Reader::waitForReaders(size_t maxRunning, bool &result)
  */
 bool Reader::readTimestep(std::shared_ptr<Token> &prev, const ReaderProperties &prop, int timestep, int step)
 {
+    if (!prepareTimestep(timestep)) {
+        sendInfo("error preparing timestep %d", timestep);
+        return false;
+    }
+
     bool result = true;
     bool collective = m_collectiveIo == Collective || (timestep < 0 && m_collectiveIo == CollectiveConstant);
     bool partitioned = m_handlePartitions == Partition || (timestep >= 0 && m_handlePartitions == PartitionTimesteps);
@@ -197,23 +201,24 @@ bool Reader::readTimestep(std::shared_ptr<Token> &prev, const ReaderProperties &
  */
 bool Reader::readTimesteps(std::shared_ptr<Token> &prev, const ReaderProperties &prop)
 {
-    bool result = true;
-    if (prop.time.inc() != 0) {
-        int step = 0;
-        for (int t = prop.time.first(); prop.time.inc() < 0 ? t >= prop.time.last() : t <= prop.time.last();
-             t += prop.time.inc()) {
-            if (!readTimestep(prev, prop, t, step)) {
-                result = false;
-                break;
-            }
-            ++step;
-            if (!result)
-                break;
-        }
-
-        waitForReaders(0, result);
-        prev.reset();
+    if (prop.time.inc() == 0) {
+        sendError("timestep increment must not be zero");
+        return false;
     }
+
+    bool result = true;
+    int timestep = prop.time.first();
+    const int nsteps = prop.time.calc_numtime();
+    for (int step = 0; step < nsteps; ++step) {
+        if (!readTimestep(prev, prop, timestep, step)) {
+            result = false;
+            break;
+        }
+        timestep += prop.time.inc();
+    }
+
+    waitForReaders(0, result);
+    prev.reset();
     return result;
 }
 
@@ -320,6 +325,11 @@ bool Reader::prepareRead()
     return true;
 }
 
+bool Reader::prepareTimestep(int timestep)
+{
+    return true;
+}
+
 bool Reader::finishRead()
 {
     return true;
@@ -377,6 +387,7 @@ void Reader::setAllowTimestepDistribution(bool allow)
 
 void Reader::observeParameter(const Parameter *param)
 {
+    assert(param);
     m_observedParameters.insert(param);
 }
 
