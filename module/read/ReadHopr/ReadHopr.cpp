@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include <vistle/core/standardattributes.h>
 #include <vistle/core/unstr.h>
 #include <vistle/module/module.h>
 
@@ -454,7 +455,7 @@ bool ReadHopr::read(Reader::Token &token, int timestep, int block)
             auto field = variables[varName];
 
             if (field) {
-                field->addAttribute("_species", varName);
+                field->addAttribute(vistle::attribute::Species, varName);
                 field->setMapping(vistle::DataBase::Vertex);
                 field->setGrid(grid);
 
