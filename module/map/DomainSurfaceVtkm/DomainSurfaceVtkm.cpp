@@ -7,7 +7,7 @@ MODULE_MAIN(DomainSurfaceVtkm)
 using namespace vistle;
 
 DomainSurfaceVtkm::DomainSurfaceVtkm(const std::string &name, int moduleID, mpi::communicator comm)
-: VtkmModule(name, moduleID, comm, 1, MappedDataHandling::Require)
+: VtkmModule(name, moduleID, comm, 1, MappedDataHandling::Use)
 {}
 
 DomainSurfaceVtkm::~DomainSurfaceVtkm()
