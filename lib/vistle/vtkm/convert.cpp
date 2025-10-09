@@ -266,6 +266,15 @@ ModuleStatusPtr vtkmAddField(viskores::cont::DataSet &vtkmDataSet, const vistle:
     return Error("Encountered an unsupported field type while attempting to convert Vistle field to Viskores field.");
 }
 
+template<typename ViskoresCoordType>
+void vtkmGetCoords(const viskores::cont::UnknownArrayHandle &unknown, const std::shared_ptr<Coords> &coords)
+{
+    auto vtkmCoord = unknown.AsArrayHandle<ViskoresCoordType>();
+    for (int d = 0; d < 3; ++d) {
+        auto x = viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, d);
+        coords->d()->x[d]->setHandle(x);
+    }
+}
 
 Object::ptr vtkmGetGeometry(const viskores::cont::DataSet &dataset)
 {
@@ -275,33 +284,19 @@ Object::ptr vtkmGetGeometry(const viskores::cont::DataSet &dataset)
         auto uPointCoordinates = dataset.GetCoordinateSystem().GetData();
         viskores::cont::UnknownArrayHandle unknown(uPointCoordinates);
         if (unknown.CanConvert<viskores::cont::ArrayHandle<viskores::Vec<Scalar, 3>>>()) {
-            auto vtkmCoord = unknown.AsArrayHandle<viskores::cont::ArrayHandle<viskores::Vec<Scalar, 3>>>();
-            for (int d = 0; d < 3; ++d) {
-                auto x = make_ArrayHandleExtractComponent(vtkmCoord, d);
-                coords->d()->x[d]->setHandle(x);
-            }
+            vtkmGetCoords<viskores::cont::ArrayHandle<viskores::Vec<Scalar, 3>>>(unknown, coords);
+        } else if (unknown.CanConvert<viskores::cont::ArrayHandleUniformPointCoordinates>()) {
+            vtkmGetCoords<viskores::cont::ArrayHandleUniformPointCoordinates>(unknown, coords);
+        } else if (unknown.CanConvert<CartesianProductFloat>()) {
+            vtkmGetCoords<CartesianProductFloat>(unknown, coords);
+        } else if (unknown.CanConvert<CartesianProductDouble>()) {
+            vtkmGetCoords<CartesianProductDouble>(unknown, coords);
         } else if (unknown.CanConvert<viskores::cont::ArrayHandleSOA<viskores::Vec3f>>()) {
             auto vtkmCoord = unknown.AsArrayHandle<viskores::cont::ArrayHandleSOA<viskores::Vec3f>>();
             for (int d = 0; d < 3; ++d) {
                 auto x = vtkmCoord.GetArray(d);
                 coords->d()->x[d]->setHandle(x);
             }
-        } else if (unknown.CanConvert<viskores::cont::ArrayHandleUniformPointCoordinates>()) {
-            auto vtkmCoord = unknown.AsArrayHandle<viskores::cont::ArrayHandleUniformPointCoordinates>();
-            for (int d = 0; d < 3; ++d) {
-                auto x = viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, d);
-                coords->d()->x[d]->setHandle(x);
-            }
-        } else if (unknown.CanConvert<CartesianProductFloat>()) {
-            auto vtkmCoord = unknown.AsArrayHandle<CartesianProductFloat>();
-            coords->d()->x[0]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 0));
-            coords->d()->x[1]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 1));
-            coords->d()->x[2]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 2));
-        } else if (unknown.CanConvert<CartesianProductDouble>()) {
-            auto vtkmCoord = unknown.AsArrayHandle<CartesianProductDouble>();
-            coords->d()->x[0]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 0));
-            coords->d()->x[1]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 1));
-            coords->d()->x[2]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 2));
         } else {
             std::cerr << "cannot convert point coordinates" << std::endl;
         }
