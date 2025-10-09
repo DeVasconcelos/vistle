@@ -1,7 +1,10 @@
 #include "convert.h"
 #include "convert_topology.h"
 
+#include <viskores/cont/ArrayHandleCartesianProduct.h>
 #include <viskores/cont/ArrayHandleExtractComponent.h>
+#include <viskores/cont/ArrayHandleSOA.h>
+#include <viskores/cont/ArrayHandleUniformPointCoordinates.h>
 
 #include <vistle/core/scalars.h>
 #include <vistle/core/uniformgrid.h>
@@ -17,6 +20,11 @@
 
 #include <boost/mpl/for_each.hpp>
 
+using FloatArray = viskores::cont::ArrayHandle<float>;
+using DoubleArray = viskores::cont::ArrayHandle<double>;
+
+using CartesianProductFloat = viskores::cont::ArrayHandleCartesianProduct<FloatArray, FloatArray, FloatArray>;
+using CartesianProductDouble = viskores::cont::ArrayHandleCartesianProduct<DoubleArray, DoubleArray, DoubleArray>;
 
 namespace vistle {
 
@@ -278,6 +286,22 @@ Object::ptr vtkmGetGeometry(const viskores::cont::DataSet &dataset)
                 auto x = vtkmCoord.GetArray(d);
                 coords->d()->x[d]->setHandle(x);
             }
+        } else if (unknown.CanConvert<viskores::cont::ArrayHandleUniformPointCoordinates>()) {
+            auto vtkmCoord = unknown.AsArrayHandle<viskores::cont::ArrayHandleUniformPointCoordinates>();
+            for (int d = 0; d < 3; ++d) {
+                auto x = viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, d);
+                coords->d()->x[d]->setHandle(x);
+            }
+        } else if (unknown.CanConvert<CartesianProductFloat>()) {
+            auto vtkmCoord = unknown.AsArrayHandle<CartesianProductFloat>();
+            coords->d()->x[0]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 0));
+            coords->d()->x[1]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 1));
+            coords->d()->x[2]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 2));
+        } else if (unknown.CanConvert<CartesianProductDouble>()) {
+            auto vtkmCoord = unknown.AsArrayHandle<CartesianProductDouble>();
+            coords->d()->x[0]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 0));
+            coords->d()->x[1]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 1));
+            coords->d()->x[2]->setHandle(viskores::cont::make_ArrayHandleExtractComponent(vtkmCoord, 2));
         } else {
             std::cerr << "cannot convert point coordinates" << std::endl;
         }
@@ -289,7 +313,6 @@ Object::ptr vtkmGetGeometry(const viskores::cont::DataSet &dataset)
     vtkmGetGhosts(dataset, result);
     return result;
 }
-
 
 namespace {
 template<typename C>
