@@ -276,6 +276,18 @@ void vtkmGetCoords(const viskores::cont::UnknownArrayHandle &unknown, const std:
     }
 }
 
+// Specialization for SoA point coordinates
+template<>
+void vtkmGetCoords<viskores::cont::ArrayHandleSOA<viskores::Vec3f>>(const viskores::cont::UnknownArrayHandle &unknown,
+                                                                    const std::shared_ptr<Coords> &coords)
+{
+    auto vtkmCoord = unknown.AsArrayHandle<viskores::cont::ArrayHandleSOA<viskores::Vec3f>>();
+    for (int d = 0; d < 3; ++d) {
+        auto x = vtkmCoord.GetArray(d);
+        coords->d()->x[d]->setHandle(x);
+    }
+}
+
 Object::ptr vtkmGetGeometry(const viskores::cont::DataSet &dataset)
 {
     Object::ptr result = vtkmGetTopology(dataset);
@@ -292,13 +304,10 @@ Object::ptr vtkmGetGeometry(const viskores::cont::DataSet &dataset)
         } else if (unknown.CanConvert<CartesianProductDouble>()) {
             vtkmGetCoords<CartesianProductDouble>(unknown, coords);
         } else if (unknown.CanConvert<viskores::cont::ArrayHandleSOA<viskores::Vec3f>>()) {
-            auto vtkmCoord = unknown.AsArrayHandle<viskores::cont::ArrayHandleSOA<viskores::Vec3f>>();
-            for (int d = 0; d < 3; ++d) {
-                auto x = vtkmCoord.GetArray(d);
-                coords->d()->x[d]->setHandle(x);
-            }
+            vtkmGetCoords<viskores::cont::ArrayHandleSOA<viskores::Vec3f>>(unknown, coords);
         } else {
-            std::cerr << "cannot convert point coordinates" << std::endl;
+            std::cerr << "Error while converting Viskores grid to Vistle: Unsupported point coordinate array type."
+                      << std::endl;
         }
 
         vtkmGetNormals(dataset, result);
