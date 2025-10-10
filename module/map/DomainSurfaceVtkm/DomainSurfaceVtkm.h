@@ -9,6 +9,8 @@ public:
     ~DomainSurfaceVtkm();
 
 private:
+    ModuleStatusPtr prepareInputGrid(const vistle::Object::const_ptr &grid,
+                                     viskores::cont::DataSet &dataset) const override;
     std::unique_ptr<viskores::filter::Filter> setUpFilter() const override;
 };
 

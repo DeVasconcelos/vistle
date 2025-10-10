@@ -1,5 +1,8 @@
 #include <viskores/filter/entity_extraction/ExternalFaces.h>
 
+#include <vistle/core/structuredgrid.h>
+#include <vistle/core/unstr.h>
+
 #include "DomainSurfaceVtkm.h"
 
 MODULE_MAIN(DomainSurfaceVtkm)
@@ -12,6 +15,14 @@ DomainSurfaceVtkm::DomainSurfaceVtkm(const std::string &name, int moduleID, mpi:
 
 DomainSurfaceVtkm::~DomainSurfaceVtkm()
 {}
+
+ModuleStatusPtr DomainSurfaceVtkm::prepareInputGrid(const vistle::Object::const_ptr &grid,
+                                                    viskores::cont::DataSet &dataset) const
+{
+    if (!StructuredGridBase::as(grid) && !UnstructuredGrid::as(grid))
+        return Error("only structured and unstructured grids supported");
+    return VtkmModule::prepareInputGrid(grid, dataset);
+}
 
 std::unique_ptr<viskores::filter::Filter> DomainSurfaceVtkm::setUpFilter() const
 {
