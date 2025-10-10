@@ -2,6 +2,8 @@
 #include "convert_topology.h"
 
 #include <viskores/cont/ArrayHandleCartesianProduct.h>
+#include <viskores/cont/ArrayHandleCompositeVector.h>
+#include <viskores/cont/ArrayHandleCounting.h>
 #include <viskores/cont/ArrayHandleExtractComponent.h>
 #include <viskores/cont/ArrayHandleSOA.h>
 #include <viskores/cont/ArrayHandleUniformPointCoordinates.h>
@@ -25,6 +27,12 @@ using DoubleArray = viskores::cont::ArrayHandle<double>;
 
 using CartesianProductFloat = viskores::cont::ArrayHandleCartesianProduct<FloatArray, FloatArray, FloatArray>;
 using CartesianProductDouble = viskores::cont::ArrayHandleCartesianProduct<DoubleArray, DoubleArray, DoubleArray>;
+
+using CompositeVec3fWithCountingTag = viskores::cont::ArrayHandle<
+    viskores::Vec<float, 3>,
+    viskores::cont::StorageTagCompositeVec<viskores::cont::StorageTagCounting, viskores::cont::StorageTagCounting,
+                                           viskores::cont::StorageTagBasic>>;
+
 
 namespace vistle {
 
@@ -303,11 +311,15 @@ Object::ptr vtkmGetGeometry(const viskores::cont::DataSet &dataset)
             vtkmGetCoords<CartesianProductFloat>(unknown, coords);
         } else if (unknown.CanConvert<CartesianProductDouble>()) {
             vtkmGetCoords<CartesianProductDouble>(unknown, coords);
+        } else if (unknown.CanConvert<CompositeVec3fWithCountingTag>()) {
+            vtkmGetCoords<CompositeVec3fWithCountingTag>(unknown, coords);
         } else if (unknown.CanConvert<viskores::cont::ArrayHandleSOA<viskores::Vec3f>>()) {
             vtkmGetCoords<viskores::cont::ArrayHandleSOA<viskores::Vec3f>>(unknown, coords);
         } else {
-            std::cerr << "Error while converting Viskores grid to Vistle: Unsupported point coordinate array type."
-                      << std::endl;
+            std::cerr << "Error while converting Viskores grid to Vistle: Unsupported point coordinate array type:\n"
+                      << "--> Array type name: " << unknown.GetArrayTypeName()
+                      << "\n--> Value type name: " << unknown.GetValueTypeName()
+                      << "\n--> Storage type name: " << unknown.GetStorageTypeName() << std::endl;
         }
 
         vtkmGetNormals(dataset, result);
