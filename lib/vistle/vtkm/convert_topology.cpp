@@ -97,9 +97,9 @@ Object::ptr vtkmGetTopology(const viskores::cont::DataSet &dataset)
         const auto [mindim, maxdim] = getMinMaxDims(eshapes);
 
         if (mindim > maxdim) {
-            // empty
+            std::cerr << "vtkmGetTopology: empty cell set" << std::endl;
         } else if (mindim == -1) {
-            // unhanded cell type
+            std::cerr << "ERR: vtkmGetTopology: encountered unsupported cell type" << std::endl;
         } else if (mindim != maxdim || maxdim == 3) {
             // require UnstructuredGrid for mixed cells
             UnstructuredGrid::ptr unstr(new UnstructuredGrid(0, 0, 0));
