@@ -39,9 +39,9 @@ for file_name in files:
 if times:
     with open(output_path, "w") as file:
         average = sum(times) / len(times)
-        file.write(f"Average: {average}\n")
-        for time in times:
-            file.write(f"{time}\n")
+        file.write(f"Average: {average}s\n")
+        for i, time in enumerate(times):
+            file.write(f"Run {i}: {time}s\n")
     
     if len(times) != len(files):
         print(f"WARNING: Extracted {len(times)} run times, but there are {len(files)} files in total!")
