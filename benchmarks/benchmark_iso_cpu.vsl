@@ -1,0 +1,47 @@
+# /usr/bin/env vistle
+# this is a Python workflow from Vistle 2024.2-9f172cf5+
+
+import os
+
+MasterHub=getMasterHub()
+VistleSession=getVistleSession()
+WorkflowConfig=getWorkflowConfig()
+uuids = {}
+
+n = int(os.getenv("GRID_SIZE"))
+
+# spawn all local modules
+umGendat1 = spawnAsync(MasterHub, 'Gendat')
+umIsoSurface3 = spawnAsync(MasterHub, 'IsoSurface')
+
+mGendat1 = waitForSpawn(umGendat1)
+setVectorParam(mGendat1, '_position', 88.36500549316406, -281.88995361328125, True)
+setIntParam(mGendat1, '_openmp_threads', 1, True)
+setIntParam(mGendat1, '_concurrency', 1, True)
+setIntParam(mGendat1, 'size_x', n, True)
+setIntParam(mGendat1, 'size_y', n, True)
+setIntParam(mGendat1, 'size_z', n, True)
+setIntParam(mGendat1, 'blocks_x', 1, True)
+setIntParam(mGendat1, 'blocks_y', 1, True)
+setIntParam(mGendat1, 'blocks_z', 1, True)
+applyParameters(mGendat1)
+
+mIsoSurface3 = waitForSpawn(umIsoSurface3)
+setVectorParam(mIsoSurface3, '_position', 95.63087463378906, -205.13186645507812, True)
+setIntParam(mIsoSurface3, '_openmp_threads', 1, True)
+setIntParam(mIsoSurface3, '_benchmark', 1, True)
+setIntParam(mIsoSurface3, '_concurrency', 1, True)
+setFloatParam(mIsoSurface3, 'isovalue', 1.1, True)
+applyParameters(mIsoSurface3)
+
+# all local connections
+connect(mGendat1,'data_out0', mIsoSurface3,'data_in')
+connect(mGendat1,'data_out0', mIsoSurface3,'mapdata_in')
+
+# spawn all remote modules
+barrier()
+compute()
+barrier()
+quit()
+
+# connections between local and remote
