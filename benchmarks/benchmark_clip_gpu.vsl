@@ -1,0 +1,64 @@
+# /usr/bin/env vistle
+# this is a Python workflow from Vistle 2024.2-26c46c492+
+
+import os
+
+MasterHub=getMasterHub()
+VistleSession=getVistleSession()
+WorkflowConfig=getWorkflowConfig()
+uuids = {}
+
+n = int(os.getenv("GRID_SIZE"))
+
+# spawn all local modules
+umGendat1 = spawnAsync(MasterHub, 'Gendat')
+umDomainSurfaceVtkm2 = spawnAsync(MasterHub, 'DomainSurfaceVtkm')
+umClipVtkm4 = spawnAsync(MasterHub, 'ClipVtkm')
+umToTriangles5 = spawnAsync(MasterHub, 'ToTriangles')
+
+mGendat1 = waitForSpawn(umGendat1)
+setVectorParam(VistleSession, f'position[{mGendat1}]', 23.350788116455078, -650.7844848632812)
+setIntParam(mGendat1, '_openmp_threads', 1, True)
+setIntParam(mGendat1, '_concurrency', 1, True)
+setIntParam(mGendat1, 'geo_mode', 3, True)
+setIntParam(mGendat1, 'size_x', n, True)
+setIntParam(mGendat1, 'size_y', n, True)
+setIntParam(mGendat1, 'size_z', n, True)
+setIntParam(mGendat1, 'blocks_x', 1, True)
+setIntParam(mGendat1, 'blocks_y', 1, True)
+setIntParam(mGendat1, 'blocks_z', 1, True)
+applyParameters(mGendat1)
+
+mDomainSurfaceVtkm2 = waitForSpawn(umDomainSurfaceVtkm2)
+setVectorParam(VistleSession, f'position[{mDomainSurfaceVtkm2}]', 23.40401268005371, -578.1372680664062)
+setIntParam(mDomainSurfaceVtkm2, '_openmp_threads', 1, True)
+setIntParam(mDomainSurfaceVtkm2, '_concurrency', 1, True)
+applyParameters(mDomainSurfaceVtkm2)
+
+mClipVtkm4 = waitForSpawn(umClipVtkm4)
+setVectorParam(VistleSession, f'position[{mClipVtkm4}]', 23.199974060058594, -421.6000671386719)
+setIntParam(mClipVtkm4, '_openmp_threads', 1, True)
+setIntParam(mClipVtkm4, '_benchmark', 1, True)
+setIntParam(mClipVtkm4, '_concurrency', 1, True)
+setVectorParam(mClipVtkm4, 'vertex', 1.0, 0.0, 0.0, True)
+applyParameters(mClipVtkm4)
+
+mToTriangles5 = waitForSpawn(umToTriangles5)
+setVectorParam(VistleSession, f'position[{mToTriangles5}]', 23.46986961364746, -503.55889892578125)
+setIntParam(mToTriangles5, '_openmp_threads', 1, True)
+setIntParam(mToTriangles5, '_concurrency', 1, True)
+applyParameters(mToTriangles5)
+
+# all local connections
+connect(mGendat1,'grid_out', mDomainSurfaceVtkm2,'data_in')
+connect(mDomainSurfaceVtkm2,'data_out', mToTriangles5,'grid_in')
+connect(mToTriangles5,'grid_out', mClipVtkm4,'data_in')
+
+# spawn all remote modules
+
+barrier()
+compute()
+barrier()
+quit()
+
+# connections between local and remote

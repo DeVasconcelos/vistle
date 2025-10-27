@@ -1,0 +1,74 @@
+# /usr/bin/env vistle
+# this is a Python workflow from Vistle 2024.2-26c46c492+
+
+MasterHub=getMasterHub()
+VistleSession=getVistleSession()
+WorkflowConfig=getWorkflowConfig()
+uuids = {}
+
+
+
+# spawn all local modules
+umGendat1 = spawnAsync(MasterHub, 'Gendat')
+umDomainSurfaceVtkm3 = spawnAsync(MasterHub, 'DomainSurfaceVtkm')
+umCutGeometry4 = spawnAsync(MasterHub, 'CutGeometry')
+umClipVtkm5 = spawnAsync(MasterHub, 'ClipVtkm')
+umToTriangles7 = spawnAsync(MasterHub, 'ToTriangles')
+umCOVER8 = spawnAsync(MasterHub, 'COVER')
+
+mGendat1 = waitForSpawn(umGendat1)
+setVectorParam(VistleSession, f'position[{mGendat1}]', 23.350788116455078, -650.7844848632812)
+setIntParam(mGendat1, '_openmp_threads', 1, True)
+setIntParam(mGendat1, '_concurrency', 1, True)
+setIntParam(mGendat1, 'geo_mode', 3, True)
+setIntParam(mGendat1, 'size_x', 20, True)
+setIntParam(mGendat1, 'size_y', 20, True)
+setIntParam(mGendat1, 'size_z', 20, True)
+setIntParam(mGendat1, 'blocks_x', 1, True)
+setIntParam(mGendat1, 'blocks_y', 1, True)
+setIntParam(mGendat1, 'blocks_z', 1, True)
+applyParameters(mGendat1)
+
+mDomainSurfaceVtkm3 = waitForSpawn(umDomainSurfaceVtkm3)
+setVectorParam(VistleSession, f'position[{mDomainSurfaceVtkm3}]', 23.40401268005371, -578.1372680664062)
+setIntParam(mDomainSurfaceVtkm3, '_openmp_threads', 1, True)
+setIntParam(mDomainSurfaceVtkm3, '_concurrency', 1, True)
+applyParameters(mDomainSurfaceVtkm3)
+
+mCutGeometry4 = waitForSpawn(umCutGeometry4)
+setVectorParam(VistleSession, f'position[{mCutGeometry4}]', -40.730133056640625, -421.6191711425781)
+setIntParam(mCutGeometry4, '_openmp_threads', 1, True)
+setIntParam(mCutGeometry4, '_benchmark', 1, True)
+setIntParam(mCutGeometry4, '_concurrency', 1, True)
+applyParameters(mCutGeometry4)
+
+mClipVtkm5 = waitForSpawn(umClipVtkm5)
+setVectorParam(VistleSession, f'position[{mClipVtkm5}]', 71.1999740600586, -422.00006103515625)
+setIntParam(mClipVtkm5, '_openmp_threads', 1, True)
+setIntParam(mClipVtkm5, '_benchmark', 1, True)
+setIntParam(mClipVtkm5, '_concurrency', 1, True)
+setVectorParam(mClipVtkm5, 'vertex', 1.0, 0.0, 0.0, True)
+applyParameters(mClipVtkm5)
+
+mToTriangles7 = waitForSpawn(umToTriangles7)
+setVectorParam(VistleSession, f'position[{mToTriangles7}]', 23.46986961364746, -503.55889892578125)
+setIntParam(mToTriangles7, '_openmp_threads', 1, True)
+setIntParam(mToTriangles7, '_concurrency', 1, True)
+applyParameters(mToTriangles7)
+
+mCOVER8 = waitForSpawn(umCOVER8)
+setVectorParam(VistleSession, f'position[{mCOVER8}]', 14.799999237060547, -336.79998779296875)
+setIntParam(mCOVER8, 'render_mode', 4, True)
+applyParameters(mCOVER8)
+
+# all local connections
+connect(mGendat1,'grid_out', mDomainSurfaceVtkm3,'data_in')
+connect(mDomainSurfaceVtkm3,'data_out', mToTriangles7,'grid_in')
+connect(mCutGeometry4,'grid_out', mCOVER8,'data_in')
+connect(mClipVtkm5,'data_out', mCOVER8,'data_in')
+connect(mToTriangles7,'grid_out', mCutGeometry4,'grid_in')
+connect(mToTriangles7,'grid_out', mClipVtkm5,'data_in')
+
+# spawn all remote modules
+
+# connections between local and remote

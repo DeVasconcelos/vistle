@@ -47,7 +47,7 @@ python extract_times.py $OUTPUT_DIRECTORY
 
 if [[ -f "times.txt" ]]; then
     echo "Now storing result into $OUTPUT_DIRECTORY..."
-    mv times.txt $OUTPUT_DIRECTORY
+    mv times.txt times_full.txt $OUTPUT_DIRECTORY
 else 
     echo "WARNING: extract_times.py did not produce output."
 fi
