@@ -31,6 +31,12 @@ struct SetDisplaceWorklet: BaseDisplaceWorklet<N>, viskores::worklet::WorkletMap
         for (auto c = 0; c < N; c++)
             displacedCoord[c] = scalar * this->m_scale;
     }
+
+    template<typename T, typename S>
+    VISKORES_EXEC void operator()(const T &scalar, const S &coord, S &displacedCoord) const
+    {
+        displacedCoord = scalar * this->m_scale;
+    }
 };
 
 template<viskores::IdComponent N>
@@ -50,6 +56,12 @@ struct AddDisplaceWorklet: BaseDisplaceWorklet<N>, viskores::worklet::WorkletMap
         for (auto c = 0; c < N; c++)
             displacedCoord[c] = coord[c] + scalar * this->m_scale;
     }
+
+    template<typename T, typename S>
+    VISKORES_EXEC void operator()(const T &scalar, const S &coord, S &displacedCoord) const
+    {
+        displacedCoord = coord + scalar * this->m_scale;
+    }
 };
 
 template<viskores::IdComponent N>
@@ -68,6 +80,12 @@ struct MultiplyDisplaceWorklet: BaseDisplaceWorklet<N>, viskores::worklet::Workl
     {
         for (auto c = 0; c < N; c++)
             displacedCoord[c] = coord[c] * scalar * this->m_scale;
+    }
+
+    template<typename T, typename S>
+    VISKORES_EXEC void operator()(const T &scalar, const S &coord, S &displacedCoord) const
+    {
+        displacedCoord = coord * scalar * this->m_scale;
     }
 };
 
