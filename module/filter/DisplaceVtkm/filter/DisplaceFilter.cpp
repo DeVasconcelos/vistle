@@ -1,5 +1,8 @@
 #include <string>
 
+#include <viskores/cont/ArrayHandleExtractComponent.h>
+#include <viskores/cont/ArrayHandleSOA.h>
+
 #include "DisplaceFilter.h"
 #include "DisplaceWorklet.h"
 
@@ -22,48 +25,79 @@ VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::
         this->CastAndCallScalarField(inputScalar.GetData(), [&](const auto &scalars) {
             viskores::cont::ArrayHandle<CoordType> result;
 
-            viskores::Vec<viskores::FloatDefault, N> mask(0.0f);
+            if (m_component == DisplaceComponent::All) {
+                switch (m_operation) {
+                case DisplaceOperation::Set:
+                    this->Invoke(SetDisplaceWorklet<N>{m_scale}, scalars, coords, result);
+                    break;
+                case DisplaceOperation::Add:
+                    this->Invoke(AddDisplaceWorklet<N>{m_scale}, scalars, coords, result);
+                    break;
+                case DisplaceOperation::Multiply:
+                    this->Invoke(MultiplyDisplaceWorklet<N>{m_scale}, scalars, coords, result);
+                    break;
+                default:
+                    throw viskores::cont::ErrorBadValue(
+                        "Error in DisplaceFilter: Encountered unknown DisplaceOperation value!");
+                }
 
-            viskores::IdComponent c = 0; // must be declared outside switch-case
-            switch (m_component) {
-            case DisplaceComponent::X:
-            case DisplaceComponent::Y:
-            case DisplaceComponent::Z:
-                c = static_cast<viskores::IdComponent>(m_component);
-                if (c < N) {
-                    mask[c] = 1.0f;
-                } else {
+                outputCoords = result;
+            } else if (m_component == DisplaceComponent::X || m_component == DisplaceComponent::Y ||
+                       m_component == DisplaceComponent::Z) {
+                viskores::IdComponent c = static_cast<viskores::IdComponent>(m_component);
+                if (c >= N)
                     throw viskores::cont::ErrorBadValue(
                         "Error in DisplaceFilter: DisplaceComponent value (" + std::to_string(c) +
                         ") out of bounds for coordinate dimension (" + std::to_string(N) + ")!");
+
+                auto desiredComponent = viskores::cont::ArrayHandleExtractComponent<CoordsArrayType>(coords, c);
+
+                using ComponentType = typename std::decay_t<decltype(desiredComponent)>::ValueType;
+                viskores::cont::ArrayHandle<ComponentType> result;
+
+                switch (m_operation) {
+                case DisplaceOperation::Set:
+                    this->Invoke(SetDisplaceWorklet<1>{m_scale}, scalars, desiredComponent, result);
+                    break;
+                case DisplaceOperation::Add:
+                    this->Invoke(AddDisplaceWorklet<1>{m_scale}, scalars, desiredComponent, result);
+                    break;
+                case DisplaceOperation::Multiply:
+                    this->Invoke(MultiplyDisplaceWorklet<1>{m_scale}, scalars, desiredComponent, result);
+                    break;
+                default:
+                    throw viskores::cont::ErrorBadValue(
+                        "Error in DisplaceFilter: Encountered unknown DisplaceOperation value!");
                 }
-                break;
-            case DisplaceComponent::All:
-                for (auto c = 0; c < N; c++) {
-                    mask[c] = 1.0f;
+
+                viskores::cont::ArrayHandle<CoordType> resultCoords;
+                resultCoords.Allocate(coords.GetNumberOfValues());
+                auto resultCoordsPortal = resultCoords.WritePortal();
+                auto coordsPortal = coords.ReadPortal();
+                auto resultPortal = result.ReadPortal();
+
+                for (auto i = 0; i < coords.GetNumberOfValues(); i++) {
+                    if (m_component == DisplaceComponent::X) {
+                        resultCoordsPortal.Set(i, viskores::Vec<ComponentType, N>{resultPortal.Get(i),
+                                                                                  coordsPortal.Get(i)[1],
+                                                                                  coordsPortal.Get(i)[2]});
+                    } else if (m_component == DisplaceComponent::Y) {
+                        resultCoordsPortal.Set(i, viskores::Vec<ComponentType, N>{coordsPortal.Get(i)[0],
+                                                                                  resultPortal.Get(i),
+                                                                                  coordsPortal.Get(i)[2]});
+                    } else if (m_component == DisplaceComponent::Z) {
+                        resultCoordsPortal.Set(i, viskores::Vec<ComponentType, N>{coordsPortal.Get(i)[0],
+                                                                                  coordsPortal.Get(i)[1],
+                                                                                  resultPortal.Get(i)});
+                    }
                 }
-                break;
-            default:
+
+                outputCoords = resultCoords;
+
+            } else {
                 throw viskores::cont::ErrorBadValue(
                     "Error in DisplaceFilter: Encountered unknown DisplaceComponent value!");
             }
-
-            switch (m_operation) {
-            case DisplaceOperation::Set:
-                this->Invoke(SetDisplaceWorklet<N>{m_scale}, scalars, coords, result);
-                break;
-            case DisplaceOperation::Add:
-                this->Invoke(AddDisplaceWorklet<N>{m_scale}, scalars, coords, result);
-                break;
-            case DisplaceOperation::Multiply:
-                this->Invoke(MultiplyDisplaceWorklet<N>{m_scale}, scalars, coords, result);
-                break;
-            default:
-                throw viskores::cont::ErrorBadValue(
-                    "Error in DisplaceFilter: Encountered unknown DisplaceOperation value!");
-            }
-
-            outputCoords = result;
         });
     });
 
