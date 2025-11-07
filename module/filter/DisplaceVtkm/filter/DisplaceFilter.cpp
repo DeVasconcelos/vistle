@@ -28,13 +28,13 @@ VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::
             if (m_component == DisplaceComponent::All) {
                 switch (m_operation) {
                 case DisplaceOperation::Set:
-                    this->Invoke(SetDisplaceWorklet<N>{m_scale}, scalars, coords, result);
+                    this->Invoke(SetDisplaceWorklet{m_scale}, scalars, coords, result);
                     break;
                 case DisplaceOperation::Add:
-                    this->Invoke(AddDisplaceWorklet<N>{m_scale}, scalars, coords, result);
+                    this->Invoke(AddDisplaceWorklet{m_scale}, scalars, coords, result);
                     break;
                 case DisplaceOperation::Multiply:
-                    this->Invoke(MultiplyDisplaceWorklet<N>{m_scale}, scalars, coords, result);
+                    this->Invoke(MultiplyDisplaceWorklet{m_scale}, scalars, coords, result);
                     break;
                 default:
                     throw viskores::cont::ErrorBadValue(
@@ -57,13 +57,13 @@ VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::
 
                 switch (m_operation) {
                 case DisplaceOperation::Set:
-                    this->Invoke(SetDisplaceWorklet<1>{m_scale}, scalars, desiredComponent, result);
+                    this->Invoke(SetDisplaceWorklet{m_scale}, scalars, desiredComponent, result);
                     break;
                 case DisplaceOperation::Add:
-                    this->Invoke(AddDisplaceWorklet<1>{m_scale}, scalars, desiredComponent, result);
+                    this->Invoke(AddDisplaceWorklet{m_scale}, scalars, desiredComponent, result);
                     break;
                 case DisplaceOperation::Multiply:
-                    this->Invoke(MultiplyDisplaceWorklet<1>{m_scale}, scalars, desiredComponent, result);
+                    this->Invoke(MultiplyDisplaceWorklet{m_scale}, scalars, desiredComponent, result);
                     break;
                 default:
                     throw viskores::cont::ErrorBadValue(
