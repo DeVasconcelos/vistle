@@ -5,6 +5,7 @@
 
 #include <vistle/util/enum.h>
 
+// TODO: Delete this class it is not necessary anymore since we now just call the worklets themselves
 /*
     This Viskores filter displaces the coordinates of a dataset according to a scalar field.
     The displacement can be applied to a specific component (X, Y, Z) or all components (see
