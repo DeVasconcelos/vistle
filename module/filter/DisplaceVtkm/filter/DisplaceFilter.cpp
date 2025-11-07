@@ -71,25 +71,15 @@ VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::
                 }
 
                 viskores::cont::ArrayHandle<CoordType> resultCoords;
+                viskores::cont::ArrayCopyShallowIfPossible(coords, resultCoords);
                 resultCoords.Allocate(coords.GetNumberOfValues());
                 auto resultCoordsPortal = resultCoords.WritePortal();
-                auto coordsPortal = coords.ReadPortal();
                 auto resultPortal = result.ReadPortal();
 
                 for (auto i = 0; i < coords.GetNumberOfValues(); i++) {
-                    if (m_component == DisplaceComponent::X) {
-                        resultCoordsPortal.Set(i, viskores::Vec<ComponentType, N>{resultPortal.Get(i),
-                                                                                  coordsPortal.Get(i)[1],
-                                                                                  coordsPortal.Get(i)[2]});
-                    } else if (m_component == DisplaceComponent::Y) {
-                        resultCoordsPortal.Set(i, viskores::Vec<ComponentType, N>{coordsPortal.Get(i)[0],
-                                                                                  resultPortal.Get(i),
-                                                                                  coordsPortal.Get(i)[2]});
-                    } else if (m_component == DisplaceComponent::Z) {
-                        resultCoordsPortal.Set(i, viskores::Vec<ComponentType, N>{coordsPortal.Get(i)[0],
-                                                                                  coordsPortal.Get(i)[1],
-                                                                                  resultPortal.Get(i)});
-                    }
+                    auto coord = resultCoordsPortal.Get(i);
+                    coord[c] = resultPortal.Get(i);
+                    resultCoordsPortal.Set(i, coord);
                 }
 
                 outputCoords = resultCoords;
