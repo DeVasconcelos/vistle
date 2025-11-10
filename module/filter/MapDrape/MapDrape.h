@@ -12,6 +12,10 @@
 #define MapDrape Displace
 #endif
 
+#ifdef DISPLACEVTKM
+#define MapDrape DisplaceVtkm
+#endif
+
 using namespace vistle;
 
 class MapDrape: public vistle::Module {
@@ -36,10 +40,15 @@ private:
     ResultCache<Coords::ptr> m_alreadyMapped;
 #endif
 
-#ifdef DISPLACE
+#if defined(DISPLACE) || defined(DISPLACEVTKM)
     IntParameter *p_operation = nullptr;
     IntParameter *p_component = nullptr;
     FloatParameter *p_scale = nullptr;
+#endif
+
+#ifdef DISPLACEVTKM
+    void applyDisplaceOperation(vistle::DataBase::const_ptr scalar, vistle::Coords::ptr coords, unsigned int c) const;
+    void applyDisplaceWorklet(vistle::DataBase::const_ptr scalar, vistle::Coords::ptr coords) const;
 #endif
 };
 

@@ -14,7 +14,13 @@
 DEFINE_ENUM_WITH_STRING_CONVERSIONS(PermutationOption, (XYZ)(XZY)(YXZ)(YZX)(ZXY)(ZYX))
 #endif
 
-#ifdef DISPLACE
+#ifdef DISPLACEVTKM
+#include <viskores/cont/Invoker.h>
+
+#include "../DisplaceVtkm/DisplaceWorklet.h"
+#endif
+
+#if defined(DISPLACE) || defined(DISPLACEVTKM)
 DEFINE_ENUM_WITH_STRING_CONVERSIONS(DisplaceComponent, (X)(Y)(Z)(All))
 DEFINE_ENUM_WITH_STRING_CONVERSIONS(DisplaceOperation, (Set)(Add)(Multiply))
 #endif
@@ -187,6 +193,7 @@ bool displace(Object::const_ptr &src, DataBase::const_ptr &data, Coords::ptr &co
 }
 #endif
 
+
 } // namespace
 
 MapDrape::MapDrape(const std::string &name, int moduleID, mpi::communicator comm): Module(name, moduleID, comm)
@@ -212,7 +219,7 @@ MapDrape::MapDrape(const std::string &name, int moduleID, mpi::communicator comm
 
     addResultCache(m_alreadyMapped);
 #endif
-#ifdef DISPLACE
+#if defined(DISPLACE) || defined(DISPLACEVTKM)
     p_component = addIntParameter("component", "component to displace for scalar input", Z, Parameter::Choice);
     V_ENUM_SET_CHOICES(p_component, DisplaceComponent);
     p_operation = addIntParameter("operation", "displacement operation to apply to selected component or element-wise",
@@ -246,12 +253,12 @@ bool MapDrape::compute()
         if (!isConnected(*data_out[port]))
             continue;
 #endif
-#ifdef DISPLACE
+#if defined(DISPLACE) || defined(DISPLACEVTKM)
         if (port > 0 && !isConnected(*data_out[port]))
             continue;
 #endif
 
-#ifdef DISPLACE
+#if defined(DISPLACE) || defined(DISPLACEVTKM)
         if (port > 0 && !outCoords)
             continue;
 #endif
@@ -263,13 +270,13 @@ bool MapDrape::compute()
         if (!cacheEntry) {
         } else
 #endif
-#ifdef DISPLACE
+#if defined(DISPLACE) || defined(DISPLACEVTKM)
             if (!data) {
             outGeo = geo->clone();
         } else
 #endif
 
-#ifdef DISPLACE
+#if defined(DISPLACE) || defined(DISPLACEVTKM)
             if (!outCoords) {
 #endif
             if (auto inCoords = Coords::as(geo)) {
@@ -279,12 +286,14 @@ bool MapDrape::compute()
 
                 outCoords = inCoords->clone();
                 updateMeta(outCoords);
+#ifndef DISPLACEVTKM
                 outCoords->resetCoords();
                 outCoords->x().resize(inCoords->getNumCoords());
                 outCoords->y().resize(inCoords->getNumCoords());
                 outCoords->z().resize(inCoords->getNumCoords());
 
                 assert(outCoords->getSize() == inCoords->getSize());
+#endif
             } else if ((inStr = StructuredGridBase::as(geo))) {
                 Index dim[] = {inStr->getNumDivisions(0), inStr->getNumDivisions(1), inStr->getNumDivisions(2)};
                 outCoords.reset(new StructuredGrid(dim[0], dim[1], dim[2]));
@@ -295,7 +304,7 @@ bool MapDrape::compute()
                           data_in[port]->getName().c_str());
                 return true;
             }
-#ifdef DISPLACE
+#if defined(DISPLACE) || defined(DISPLACEVTKM)
         }
 #endif
 
@@ -424,6 +433,11 @@ bool MapDrape::compute()
             }
             updateMeta(outCoords);
 #endif
+
+#ifdef DISPLACEVTKM
+            applyDisplaceWorklet(data, outCoords);
+            updateMeta(outCoords);
+#endif
         }
 
         if (!outGeo) {
@@ -445,7 +459,7 @@ bool MapDrape::compute()
 
 bool MapDrape::prepare()
 {
-#ifdef DISPLACE
+#if defined(DISPLACE) || defined(DISPLACEVTKM)
     if (!isConnected(*data_in[0])) {
         sendError("input on first port is required for computing output grid");
     }
@@ -457,3 +471,56 @@ bool MapDrape::reduce(int timestep)
 {
     return true;
 }
+
+#ifdef DISPLACEVTKM
+
+void MapDrape::applyDisplaceOperation(vistle::DataBase::const_ptr scalar, vistle::Coords::ptr coords,
+                                      unsigned int c) const
+{
+    auto operation = static_cast<DisplaceOperation>(p_operation->getValue());
+    auto scale = static_cast<viskores::FloatDefault>(p_scale->getValue());
+
+    auto coordHandle = coords->x(c).handle();
+
+    viskores::cont::Invoker invoke;
+
+    if (auto test = vistle::Vec<vistle::Scalar, 1>::as(scalar)) {
+        auto scalarHandle = test->x().handle();
+        switch (operation) {
+        case DisplaceOperation::Set:
+            invoke(SetDisplaceWorklet{scale}, scalarHandle, coordHandle, coordHandle);
+            break;
+        case DisplaceOperation::Add:
+            invoke(AddDisplaceWorklet{scale}, scalarHandle, coordHandle, coordHandle);
+            break;
+        case DisplaceOperation::Multiply:
+            invoke(MultiplyDisplaceWorklet{scale}, scalarHandle, coordHandle, coordHandle);
+            break;
+        default:
+            sendError("Error in DisplaceVtkm: Encountered unknown DisplaceOperation value!");
+            break;
+        }
+    }
+    return;
+}
+
+
+void MapDrape::applyDisplaceWorklet(vistle::DataBase::const_ptr scalar, vistle::Coords::ptr coords) const
+{
+    auto component = static_cast<DisplaceComponent>(p_component->getValue());
+    switch (component) {
+    case DisplaceComponent::X:
+    case DisplaceComponent::Y:
+    case DisplaceComponent::Z:
+        applyDisplaceOperation(scalar, coords, static_cast<unsigned int>(component));
+        break;
+    case DisplaceComponent::All:
+        for (unsigned int c = 0; c < 3; ++c)
+            applyDisplaceOperation(scalar, coords, c);
+        break;
+    default:
+        sendError("Error in DisplaceVtkm: Encountered unknown DisplaceComponent value!");
+        break;
+    }
+}
+#endif
