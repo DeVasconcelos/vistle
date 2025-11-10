@@ -10,6 +10,34 @@ VISKORES_CONT DisplaceFilter::DisplaceFilter()
 : m_component(DisplaceComponent::X), m_operation(DisplaceOperation::Add), m_scale(1.0f)
 {}
 
+template<typename ScalarArrayType, typename CoordsArrayType>
+void applyOperation(const ScalarArrayType &scalar, CoordsArrayType &coords, viskores::FloatDefault scale,
+                    DisplaceFilter::DisplaceOperation operation, viskores::IdComponent c)
+{
+    auto desiredComponent = viskores::cont::ArrayHandleExtractComponent<CoordsArrayType>(coords, c);
+    using ComponentType = typename std::decay_t<decltype(desiredComponent)>::ValueType;
+
+
+    viskores::cont::ArrayHandle<ComponentType> result;
+
+    viskores::cont::Invoker invoke;
+    switch (operation) {
+    case DisplaceFilter::DisplaceOperation::Set:
+        invoke(SetDisplaceWorklet{scale}, scalar, desiredComponent, result);
+        break;
+    case DisplaceFilter::DisplaceOperation::Add:
+        invoke(AddDisplaceWorklet{scale}, scalar, desiredComponent, result);
+        break;
+    case DisplaceFilter::DisplaceOperation::Multiply:
+        invoke(MultiplyDisplaceWorklet{scale}, scalar, desiredComponent, result);
+        break;
+    default:
+        throw viskores::cont::ErrorBadValue("Error in DisplaceVtkm: Encountered unknown DisplaceOperation value!");
+    }
+
+    viskores::cont::ArrayCopy(result, desiredComponent);
+}
+
 VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::cont::DataSet &inputDataset)
 {
     auto inputScalar = this->GetFieldFromDataSet(inputDataset);
@@ -17,6 +45,7 @@ VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::
 
     viskores::cont::UnknownArrayHandle outputCoords;
 
+    // TODO: don't hard code dimension...
     this->CastAndCallVecField<3>(inputCoords.GetData(), [&](const auto &coords) {
         using CoordsArrayType = std::decay_t<decltype(coords)>;
         using CoordType = typename CoordsArrayType::ValueType;
@@ -24,22 +53,12 @@ VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::
 
         this->CastAndCallScalarField(inputScalar.GetData(), [&](const auto &scalars) {
             viskores::cont::ArrayHandle<CoordType> result;
+            result.Allocate(coords.GetNumberOfValues());
+            viskores::cont::ArrayCopy(coords, result);
 
             if (m_component == DisplaceComponent::All) {
-                switch (m_operation) {
-                case DisplaceOperation::Set:
-                    this->Invoke(SetDisplaceWorklet{m_scale}, scalars, coords, result);
-                    break;
-                case DisplaceOperation::Add:
-                    this->Invoke(AddDisplaceWorklet{m_scale}, scalars, coords, result);
-                    break;
-                case DisplaceOperation::Multiply:
-                    this->Invoke(MultiplyDisplaceWorklet{m_scale}, scalars, coords, result);
-                    break;
-                default:
-                    throw viskores::cont::ErrorBadValue(
-                        "Error in DisplaceFilter: Encountered unknown DisplaceOperation value!");
-                }
+                for (viskores::IdComponent c = 0; c < N; c++)
+                    applyOperation(scalars, result, m_scale, m_operation, c);
 
                 outputCoords = result;
             } else if (m_component == DisplaceComponent::X || m_component == DisplaceComponent::Y ||
@@ -49,40 +68,9 @@ VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::
                     throw viskores::cont::ErrorBadValue(
                         "Error in DisplaceFilter: DisplaceComponent value (" + std::to_string(c) +
                         ") out of bounds for coordinate dimension (" + std::to_string(N) + ")!");
+                applyOperation(scalars, result, m_scale, m_operation, c);
 
-                auto desiredComponent = viskores::cont::ArrayHandleExtractComponent<CoordsArrayType>(coords, c);
-
-                using ComponentType = typename std::decay_t<decltype(desiredComponent)>::ValueType;
-                viskores::cont::ArrayHandle<ComponentType> result;
-
-                switch (m_operation) {
-                case DisplaceOperation::Set:
-                    this->Invoke(SetDisplaceWorklet{m_scale}, scalars, desiredComponent, result);
-                    break;
-                case DisplaceOperation::Add:
-                    this->Invoke(AddDisplaceWorklet{m_scale}, scalars, desiredComponent, result);
-                    break;
-                case DisplaceOperation::Multiply:
-                    this->Invoke(MultiplyDisplaceWorklet{m_scale}, scalars, desiredComponent, result);
-                    break;
-                default:
-                    throw viskores::cont::ErrorBadValue(
-                        "Error in DisplaceFilter: Encountered unknown DisplaceOperation value!");
-                }
-
-                viskores::cont::ArrayHandle<CoordType> resultCoords;
-                viskores::cont::ArrayCopyShallowIfPossible(coords, resultCoords);
-                resultCoords.Allocate(coords.GetNumberOfValues());
-                auto resultCoordsPortal = resultCoords.WritePortal();
-                auto resultPortal = result.ReadPortal();
-
-                for (auto i = 0; i < coords.GetNumberOfValues(); i++) {
-                    auto coord = resultCoordsPortal.Get(i);
-                    coord[c] = resultPortal.Get(i);
-                    resultCoordsPortal.Set(i, coord);
-                }
-
-                outputCoords = resultCoords;
+                outputCoords = result;
 
             } else {
                 throw viskores::cont::ErrorBadValue(
