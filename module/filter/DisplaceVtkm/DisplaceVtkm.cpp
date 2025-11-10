@@ -2,8 +2,7 @@
 #include <viskores/cont/ArrayHandleExtractComponent.h>
 #include <viskores/cont/Invoker.h>
 
-#include <vistle/util/enum.h>
-
+#include "filter/DisplaceFilter.h"
 #include "filter/DisplaceWorklet.h"
 
 #include "DisplaceVtkm.h"
@@ -15,13 +14,13 @@ using namespace vistle;
 DisplaceVtkm::DisplaceVtkm(const std::string &name, int moduleID, mpi::communicator comm)
 : VtkmModule(name, moduleID, comm, 5, MappedDataHandling::Require)
 {
-    p_component =
-        addIntParameter("component", "component to displace for scalar input", DisplaceComponent::Z, Parameter::Choice);
-    V_ENUM_SET_CHOICES(p_component, DisplaceComponent);
+    p_component = addIntParameter("component", "component to displace for scalar input",
+                                  DisplaceFilter::DisplaceComponent::Z, Parameter::Choice);
+    V_ENUM_SET_CHOICES_SCOPE(p_component, DisplaceComponent, DisplaceFilter);
 
     p_operation = addIntParameter("operation", "displacement operation to apply to selected component or element-wise",
-                                  DisplaceOperation::Add, Parameter::Choice);
-    V_ENUM_SET_CHOICES(p_operation, DisplaceOperation);
+                                  DisplaceFilter::DisplaceOperation::Add, Parameter::Choice);
+    V_ENUM_SET_CHOICES_SCOPE(p_operation, DisplaceOperation, DisplaceFilter);
 
     p_scale = addFloatParameter("scale", "scaling factor for displacement", 1.);
 }
@@ -36,8 +35,8 @@ struct ScalarToVec {
 };
 
 template<typename ScalarArrayType, typename CoordsArrayType>
-void DisplaceVtkm::applyOperation(const ScalarArrayType &scalar, CoordsArrayType &coords, viskores::IdComponent c,
-                                  DisplaceOperation operation, viskores::FloatDefault scale) const
+void applyOperation(const ScalarArrayType &scalar, CoordsArrayType &coords, viskores::FloatDefault scale,
+                    DisplaceFilter::DisplaceOperation operation, viskores::IdComponent c)
 {
     auto desiredComponent = viskores::cont::ArrayHandleExtractComponent<CoordsArrayType>(coords, c);
     using ComponentType = typename std::decay_t<decltype(desiredComponent)>::ValueType;
@@ -47,20 +46,20 @@ void DisplaceVtkm::applyOperation(const ScalarArrayType &scalar, CoordsArrayType
 
     viskores::cont::Invoker invoke;
     switch (operation) {
-    case DisplaceOperation::Set:
+    case DisplaceFilter::DisplaceOperation::Set:
         invoke(SetDisplaceWorklet{scale}, scalar, desiredComponent, result);
         break;
-    case DisplaceOperation::Add:
+    case DisplaceFilter::DisplaceOperation::Add:
         invoke(AddDisplaceWorklet{scale}, scalar, desiredComponent, result);
         break;
-    case DisplaceOperation::Multiply:
+    case DisplaceFilter::DisplaceOperation::Multiply:
         invoke(MultiplyDisplaceWorklet{scale}, scalar, desiredComponent, result);
         break;
     default:
         throw viskores::cont::ErrorBadValue("Error in DisplaceVtkm: Encountered unknown DisplaceOperation value!");
     }
 
-    viskores::cont::ArrayCopyShallowIfPossible(result, desiredComponent);
+    viskores::cont::ArrayCopy(result, desiredComponent);
 }
 
 ModuleStatusPtr DisplaceVtkm::prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid,
@@ -73,8 +72,8 @@ ModuleStatusPtr DisplaceVtkm::prepareInputField(const vistle::Port *port, const 
 
 
     if (fieldName == getFieldName(0)) {
-        auto component = static_cast<DisplaceComponent>(p_component->getValue());
-        auto operation = static_cast<DisplaceOperation>(p_operation->getValue());
+        auto component = static_cast<DisplaceFilter::DisplaceComponent>(p_component->getValue());
+        auto operation = static_cast<DisplaceFilter::DisplaceOperation>(p_operation->getValue());
         auto scale = static_cast<viskores::FloatDefault>(p_scale->getValue());
 
 
@@ -88,14 +87,15 @@ ModuleStatusPtr DisplaceVtkm::prepareInputField(const vistle::Port *port, const 
                 constexpr viskores::Id N = 3;
                 using VecList = viskores::ListTransform<viskores::TypeListFieldScalar, ScalarToVec<N>::template type>;
                 coords.CastAndCallForTypesWithFloatFallback<VecList, VISKORES_DEFAULT_STORAGE_LIST>([&](auto &coords) {
-                    if (component == DisplaceComponent::All) {
+                    if (component == DisplaceFilter::DisplaceComponent::All) {
                         for (viskores::IdComponent c = 0; c < N; c++)
-                            applyOperation(scalar, coords, c, operation, scale);
+                            applyOperation(scalar, coords, scale, operation, c);
 
-                    } else if (component == DisplaceComponent::X || component == DisplaceComponent::Y ||
-                               component == DisplaceComponent::Z) {
-                        applyOperation(scalar, coords, static_cast<viskores::IdComponent>(p_component->getValue()),
-                                       operation, scale);
+                    } else if (component == DisplaceFilter::DisplaceComponent::X ||
+                               component == DisplaceFilter::DisplaceComponent::Y ||
+                               component == DisplaceFilter::DisplaceComponent::Z) {
+                        applyOperation(scalar, coords, scale, operation,
+                                       static_cast<viskores::IdComponent>(p_component->getValue()));
 
                     } else {
                         throw viskores::cont::ErrorBadValue(
