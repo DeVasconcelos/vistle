@@ -4,7 +4,7 @@
 
 #include <vistle/util/enum.h>
 
-#include "filter/DisplaceWorklet.h"
+#include "DisplaceWorklet.h"
 
 #include "DisplaceVtkm.h"
 

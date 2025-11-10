@@ -1,4 +1,4 @@
-set(HEADERS filter/DisplaceWorklet.h DisplaceVtkm.h)
+set(HEADERS DisplaceWorklet.h DisplaceVtkm.h)
 set(SOURCES DisplaceVtkm.cpp)
 
 add_vtkm_module(DisplaceVtkm "move vertices according to mapped data of first input" ${HEADERS} ${SOURCES})
