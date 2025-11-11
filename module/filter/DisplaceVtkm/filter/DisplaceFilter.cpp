@@ -43,11 +43,10 @@ VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::
 
     viskores::cont::UnknownArrayHandle outputCoords;
 
-    // TODO: don't hard code dimension...
-    this->CastAndCallVecField<3>(inputCoords.GetData(), [&](const auto &coords) {
+    constexpr viskores::IdComponent CoordsDim = 3;
+    this->CastAndCallVecField<CoordsDim>(inputCoords.GetData(), [&](const auto &coords) {
         using CoordsArrayType = std::decay_t<decltype(coords)>;
         using CoordType = typename CoordsArrayType::ValueType;
-        constexpr int N = CoordType::NUM_COMPONENTS;
 
         this->CastAndCallScalarField(inputScalar.GetData(), [&](const auto &scalars) {
             viskores::cont::ArrayHandle<CoordType> result;
@@ -55,17 +54,13 @@ VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::
             viskores::cont::ArrayCopy(coords, result);
 
             if (m_component == DisplaceComponent::All) {
-                for (viskores::IdComponent c = 0; c < N; c++)
+                for (viskores::IdComponent c = 0; c < CoordsDim; c++)
                     applyOperation(scalars, result, m_scale, m_operation, c);
 
                 outputCoords = result;
             } else if (m_component == DisplaceComponent::X || m_component == DisplaceComponent::Y ||
                        m_component == DisplaceComponent::Z) {
                 viskores::IdComponent c = static_cast<viskores::IdComponent>(m_component);
-                if (c >= N)
-                    throw viskores::cont::ErrorBadValue(
-                        "Error in DisplaceFilter: DisplaceComponent value (" + std::to_string(c) +
-                        ") out of bounds for coordinate dimension (" + std::to_string(N) + ")!");
                 applyOperation(scalars, result, m_scale, m_operation, c);
 
                 outputCoords = result;
