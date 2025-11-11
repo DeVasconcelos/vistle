@@ -15,27 +15,21 @@ void applyOperation(const ScalarArrayType &scalar, CoordsArrayType &coords, visk
                     DisplaceFilter::DisplaceOperation operation, viskores::IdComponent c)
 {
     auto desiredComponent = viskores::cont::ArrayHandleExtractComponent<CoordsArrayType>(coords, c);
-    using ComponentType = typename std::decay_t<decltype(desiredComponent)>::ValueType;
-
-
-    viskores::cont::ArrayHandle<ComponentType> result;
 
     viskores::cont::Invoker invoke;
     switch (operation) {
     case DisplaceFilter::DisplaceOperation::Set:
-        invoke(SetDisplaceWorklet{scale}, scalar, desiredComponent, result);
+        invoke(SetDisplaceWorklet{scale}, scalar, desiredComponent, desiredComponent);
         break;
     case DisplaceFilter::DisplaceOperation::Add:
-        invoke(AddDisplaceWorklet{scale}, scalar, desiredComponent, result);
+        invoke(AddDisplaceWorklet{scale}, scalar, desiredComponent, desiredComponent);
         break;
     case DisplaceFilter::DisplaceOperation::Multiply:
-        invoke(MultiplyDisplaceWorklet{scale}, scalar, desiredComponent, result);
+        invoke(MultiplyDisplaceWorklet{scale}, scalar, desiredComponent, desiredComponent);
         break;
     default:
         throw viskores::cont::ErrorBadValue("Error in DisplaceVtkm: Encountered unknown DisplaceOperation value!");
     }
-
-    viskores::cont::ArrayCopy(result, desiredComponent);
 }
 
 VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::cont::DataSet &inputDataset)
