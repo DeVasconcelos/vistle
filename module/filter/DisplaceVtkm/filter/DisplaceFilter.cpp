@@ -1,4 +1,5 @@
 #include <string>
+#include <type_traits>
 
 #include <viskores/cont/ArrayHandleExtractComponent.h>
 #include <viskores/cont/ArrayHandleSOA.h>
@@ -14,6 +15,9 @@ template<typename ScalarArrayType, typename CoordsArrayType>
 void applyOperation(const ScalarArrayType &scalar, CoordsArrayType &coords, viskores::FloatDefault scale,
                     DisplaceFilter::DisplaceOperation operation, viskores::IdComponent c)
 {
+    static_assert(!std::is_const<std::remove_reference_t<CoordsArrayType>>::value,
+                  "CoordsArrayType must be non-const as its contents will be modified by applyOperation!");
+
     auto desiredComponent = viskores::cont::ArrayHandleExtractComponent<CoordsArrayType>(coords, c);
 
     viskores::cont::Invoker invoke;
