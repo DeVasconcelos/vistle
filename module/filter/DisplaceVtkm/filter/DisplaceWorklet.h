@@ -23,6 +23,14 @@ struct SetDisplaceWorklet: BaseDisplaceWorklet, viskores::worklet::WorkletMapFie
     using InputDomain = _1;
 
     template<typename T, typename S>
+    VISKORES_EXEC void operator()(const viskores::Vec<T, 3> &scalar, const viskores::Vec<S, 3> &coords,
+                                  viskores::Vec<S, 3> &displacedCoord) const
+    {
+        for (viskores::Id i = 0; i < 3; i++)
+            displacedCoord[i] = scalar[i] * this->m_scale;
+    }
+
+    template<typename T, typename S>
     VISKORES_EXEC void operator()(const T &scalar, const S &coord, S &displacedCoord) const
     {
         displacedCoord = scalar * this->m_scale;
@@ -39,6 +47,14 @@ struct AddDisplaceWorklet: BaseDisplaceWorklet, viskores::worklet::WorkletMapFie
     using InputDomain = _1;
 
     template<typename T, typename S>
+    VISKORES_EXEC void operator()(const viskores::Vec<T, 3> &scalar, const viskores::Vec<S, 3> &coords,
+                                  viskores::Vec<S, 3> &displacedCoord) const
+    {
+        for (viskores::Id i = 0; i < 3; i++)
+            displacedCoord[i] = coords[i] + scalar[i] * this->m_scale;
+    }
+
+    template<typename T, typename S>
     VISKORES_EXEC void operator()(const T &scalar, const S &coord, S &displacedCoord) const
     {
         displacedCoord = coord + scalar * this->m_scale;
@@ -53,6 +69,14 @@ struct MultiplyDisplaceWorklet: BaseDisplaceWorklet, viskores::worklet::WorkletM
     using ControlSignature = void(FieldIn scalarField, FieldIn coords, FieldOut result);
     using ExecutionSignature = void(_1, _2, _3);
     using InputDomain = _1;
+
+    template<typename T, typename S>
+    VISKORES_EXEC void operator()(const viskores::Vec<T, 3> &scalar, const viskores::Vec<S, 3> &coords,
+                                  viskores::Vec<S, 3> &displacedCoord) const
+    {
+        for (viskores::Id i = 0; i < 3; i++)
+            displacedCoord[i] = coords[i] * scalar[i] * this->m_scale;
+    }
 
     template<typename T, typename S>
     VISKORES_EXEC void operator()(const T &scalar, const S &coord, S &displacedCoord) const

@@ -11,70 +11,98 @@ VISKORES_CONT DisplaceFilter::DisplaceFilter()
 : m_component(DisplaceComponent::X), m_operation(DisplaceOperation::Add), m_scale(1.0f)
 {}
 
-template<typename ScalarArrayType, typename CoordsArrayType>
-void applyOperation(const ScalarArrayType &scalar, CoordsArrayType &coords, viskores::FloatDefault scale,
-                    DisplaceFilter::DisplaceOperation operation, viskores::IdComponent c)
+// applies desired displace operation to `coords`. It is assumed that `field` and `coords` have the same dimension.
+template<typename FieldArrayType, typename CoordsArrayType>
+void applyDisplaceOperation(const FieldArrayType &field, CoordsArrayType &coords, viskores::FloatDefault scale,
+                            DisplaceFilter::DisplaceOperation operation)
 {
     static_assert(!std::is_const<std::remove_reference_t<CoordsArrayType>>::value,
-                  "CoordsArrayType must be non-const as its contents will be modified by applyOperation!");
-
-    auto desiredComponent = viskores::cont::ArrayHandleExtractComponent<CoordsArrayType>(coords, c);
+                  "CoordsArrayType must be non-const as its contents will be modified by applyDisplaceOperation!");
 
     viskores::cont::Invoker invoke;
     switch (operation) {
     case DisplaceFilter::DisplaceOperation::Set:
-        invoke(SetDisplaceWorklet{scale}, scalar, desiredComponent, desiredComponent);
+        invoke(SetDisplaceWorklet{scale}, field, coords, coords);
         break;
     case DisplaceFilter::DisplaceOperation::Add:
-        invoke(AddDisplaceWorklet{scale}, scalar, desiredComponent, desiredComponent);
+        invoke(AddDisplaceWorklet{scale}, field, coords, coords);
         break;
     case DisplaceFilter::DisplaceOperation::Multiply:
-        invoke(MultiplyDisplaceWorklet{scale}, scalar, desiredComponent, desiredComponent);
+        invoke(MultiplyDisplaceWorklet{scale}, field, coords, coords);
         break;
     default:
         throw viskores::cont::ErrorBadValue("Error in DisplaceVtkm: Encountered unknown DisplaceOperation value!");
     }
 }
 
+// applies desired displace operation to a specific component of the `coords` array
+template<typename FieldArrayType, typename CoordsArrayType>
+void applyDisplaceOperation(const FieldArrayType &field, CoordsArrayType &coords, viskores::FloatDefault scale,
+                            DisplaceFilter::DisplaceOperation operation, viskores::IdComponent c)
+{
+    auto desiredComponent = viskores::cont::ArrayHandleExtractComponent<CoordsArrayType>(coords, c);
+
+    applyDisplaceOperation(field, desiredComponent, scale, operation);
+}
+
 VISKORES_CONT viskores::cont::DataSet DisplaceFilter::DoExecute(const viskores::cont::DataSet &inputDataset)
 {
-    auto inputScalar = this->GetFieldFromDataSet(inputDataset);
+    auto inputField = this->GetFieldFromDataSet(inputDataset);
     auto inputCoords = inputDataset.GetCoordinateSystem(this->GetActiveCoordinateSystemIndex());
 
     viskores::cont::UnknownArrayHandle outputCoords;
 
-    constexpr viskores::IdComponent CoordsDim = 3;
-    this->CastAndCallVecField<CoordsDim>(inputCoords.GetData(), [&](const auto &coords) {
+    // we assume the point coordinates are three dimensional
+    constexpr viskores::IdComponent COORDS_DIM = 3;
+    this->CastAndCallVecField<COORDS_DIM>(inputCoords.GetData(), [&](const auto &coords) {
         using CoordsArrayType = std::decay_t<decltype(coords)>;
         using CoordType = typename CoordsArrayType::ValueType;
 
-        this->CastAndCallScalarField(inputScalar.GetData(), [&](const auto &scalars) {
-            viskores::cont::ArrayHandle<CoordType> result;
-            result.Allocate(coords.GetNumberOfValues());
-            viskores::cont::ArrayCopy(coords, result);
+        // we assume the data field is either 1D or 3D
+        using TypeListMappedData =
+            viskores::List<viskores::Float32, viskores::Float64, viskores::Vec3f_32, viskores::Vec3f_64>;
+        inputField.GetData().CastAndCallForTypesWithFloatFallback<TypeListMappedData, VISKORES_DEFAULT_STORAGE_LIST>(
+            [&](const auto &field) {
+                using FieldType = typename std::decay_t<decltype(field)>::ValueType;
+                constexpr bool fieldIsScalar = std::is_arithmetic_v<FieldType>;
 
-            if (m_component == DisplaceComponent::All) {
-                for (viskores::IdComponent c = 0; c < CoordsDim; c++)
-                    applyOperation(scalars, result, m_scale, m_operation, c);
+                viskores::cont::ArrayHandle<CoordType> result;
+                result.Allocate(coords.GetNumberOfValues());
+                viskores::cont::ArrayCopy(coords, result);
 
-                outputCoords = result;
-            } else if (m_component == DisplaceComponent::X || m_component == DisplaceComponent::Y ||
-                       m_component == DisplaceComponent::Z) {
-                viskores::IdComponent c = static_cast<viskores::IdComponent>(m_component);
-                applyOperation(scalars, result, m_scale, m_operation, c);
+                if constexpr (fieldIsScalar) {
+                    if (m_component == DisplaceComponent::All) {
+                        for (viskores::IdComponent c = 0; c < COORDS_DIM; c++)
+                            applyDisplaceOperation(field, result, m_scale, m_operation, c);
 
-                outputCoords = result;
+                        outputCoords = result;
+                    } else if (m_component == DisplaceComponent::X || m_component == DisplaceComponent::Y ||
+                               m_component == DisplaceComponent::Z) {
+                        viskores::IdComponent c = static_cast<viskores::IdComponent>(m_component);
+                        applyDisplaceOperation(field, result, m_scale, m_operation, c);
 
-            } else {
-                throw viskores::cont::ErrorBadValue(
-                    "Error in DisplaceFilter: Encountered unknown DisplaceComponent value!");
-            }
-        });
+                        outputCoords = result;
+
+                    } else {
+                        throw viskores::cont::ErrorBadValue(
+                            "Error in DisplaceFilter: Encountered unknown DisplaceComponent value!");
+                    }
+                } else if constexpr (!fieldIsScalar && FieldType::NUM_COMPONENTS == COORDS_DIM) {
+                    applyDisplaceOperation(field, result, m_scale, m_operation);
+
+                    outputCoords = result;
+                } else {
+                    throw viskores::cont::ErrorBadValue(
+                        "Error in DisplaceFilter: Cannot apply filter on point coordinates of dimension " +
+                        std::to_string(COORDS_DIM) + " with data field of dimension " +
+                        std::to_string(FieldType::NUM_COMPONENTS) + "!");
+                }
+            });
     });
 
     auto outputFieldName = this->GetOutputFieldName();
     if (outputFieldName == "")
-        outputFieldName = inputScalar.GetName() + "_displaced";
+        outputFieldName = inputField.GetName() + "_displaced";
 
     return this->CreateResultCoordinateSystem(
         inputDataset, inputDataset.GetCellSet(), inputCoords.GetName(), outputCoords,

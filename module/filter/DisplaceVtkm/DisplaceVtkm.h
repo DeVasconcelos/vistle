@@ -13,10 +13,6 @@ private:
     vistle::IntParameter *p_operation = nullptr;
     vistle::FloatParameter *p_scale = nullptr;
 
-    ModuleStatusPtr prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid,
-                                      const vistle::DataBase::const_ptr &field, std::string &fieldName,
-                                      viskores::cont::DataSet &dataset) const override;
-
     std::unique_ptr<viskores::filter::Filter> setUpFilter() const override;
 };
 

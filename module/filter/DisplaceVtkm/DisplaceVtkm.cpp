@@ -28,23 +28,6 @@ DisplaceVtkm::DisplaceVtkm(const std::string &name, int moduleID, mpi::communica
 DisplaceVtkm::~DisplaceVtkm()
 {}
 
-template<viskores::IdComponent VecSize>
-struct ScalarToVec {
-    template<typename T>
-    using type = viskores::Vec<T, VecSize>;
-};
-
-ModuleStatusPtr DisplaceVtkm::prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid,
-                                                const vistle::DataBase::const_ptr &field, std::string &fieldName,
-                                                viskores::cont::DataSet &dataset) const
-{
-    // TODO: add support for 3D data fields
-    if (vistle::Vec<vistle::Scalar, 3>::as(field))
-        return Error("Only one-dimensional data fields are supported!");
-
-    return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
-}
-
 std::unique_ptr<viskores::filter::Filter> DisplaceVtkm::setUpFilter() const
 {
     auto filter = std::make_unique<DisplaceFilter>();
