@@ -8,9 +8,11 @@ public:
     StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm);
 
 private:
+    vistle::IntParameter *m_numberOfPoints;
     vistle::IntParameter *m_numberOfSteps;
     vistle::FloatParameter *m_stepSize;
 
+    vistle::VectorParameter *m_direction;
     vistle::VectorParameter *m_startPoint1;
     vistle::VectorParameter *m_startPoint2;
 
