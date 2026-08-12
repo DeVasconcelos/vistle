@@ -93,3 +93,12 @@ std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
 
     return filter;
 }
+
+vistle::DataBase::ptr StreamlineVtkm::prepareOutputField(const viskores::cont::DataSet &dataset,
+                                                         const vistle::Object::const_ptr &inputGrid,
+                                                         const vistle::DataBase::const_ptr &inputField,
+                                                         const std::string &fieldName,
+                                                         const vistle::Object::const_ptr &outputGrid) const
+{
+    return nullptr;
+}
