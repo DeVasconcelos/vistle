@@ -1,8 +1,10 @@
 #include <viskores/cont/ArrayHandle.h>
 #include <viskores/filter/flow/Streamline.h>
+#include <viskores/filter/resampling/Probe.h>
 #include <viskores/Particle.h>
 
 #include <vistle/util/enum.h>
+#include <vistle/vtkm/convert.h>
 
 #include "StreamlineVtkm.h"
 
@@ -18,7 +20,8 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
 {
     setCurrentParameterGroup("Seed Points");
     m_numberOfPoints = addIntParameter("number_of_seeds", "number of seed points", 2);
-    m_startStyle = addIntParameter("start_style", "initial particle position configuration", StartStyle::Plane, Parameter::Choice);
+    m_startStyle =
+        addIntParameter("start_style", "initial particle position configuration", StartStyle::Plane, Parameter::Choice);
     V_ENUM_SET_CHOICES_SCOPE(m_startStyle, StartStyle, );
     m_startPoint1 = addVectorParameter("startpoint1", "1st initial point", ParamVector(0, 0.2, 0));
     m_startPoint2 = addVectorParameter("startpoint2", "2nd initial point", ParamVector(1, 0, 0));
@@ -28,7 +31,8 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
     m_numberOfSteps = addIntParameter("steps_max", "maximum number of integration steps", 100);
 
     setCurrentParameterGroup("Step Length Control");
-    m_integrationMethod = addIntParameter("integration_method", "integration method", IntegrationMethod::RK4, Parameter::Choice);
+    m_integrationMethod =
+        addIntParameter("integration_method", "integration method", IntegrationMethod::RK4, Parameter::Choice);
     V_ENUM_SET_CHOICES_SCOPE(m_integrationMethod, IntegrationMethod, );
     m_stepSize = addFloatParameter("step_size", "integration step size", 0.1f);
 }
@@ -121,14 +125,24 @@ vistle::DataBase::ptr StreamlineVtkm::prepareOutputField(const viskores::cont::D
                                                          const std::string &fieldName,
                                                          const vistle::Object::const_ptr &outputGrid) const
 {
-    /*  auto mapped = inputField->clone();
-    updateMeta(mapped);
-    auto mapping = mapped->mapping();
-    mapped->copyAttributes(inputField);
-    mapped->setMapping(mapping);
-    if (outputGrid)
-        mapped->setGrid(outputGrid);
-    return mapped; */
+    // The Streamline filter only returns a geometry of polylines. To match the Tracer behavior, we
+    // need to resample the input field onto the output geometry. To keep this on the device, we use
+    // the Probe filter for this.
+    // FIXME: Due to the rigid structure of VtkmModule, we need to re-convert the input grid and field
+    // to a Viskores dataset again here (this already happens in the prepareInput-methods).
+    viskores::cont::DataSet inputDataset;
+    auto status = vtkmSetGrid(inputDataset, inputGrid);
+    if (!isValid(status))
+        return nullptr;
 
-    return nullptr;
+    status = vtkmAddField(inputDataset, inputField, fieldName);
+    if (!isValid(status))
+        return nullptr;
+
+    auto probe = std::make_unique<viskores::filter::resampling::Probe>();
+    probe->SetGeometry(dataset);
+    probe->SetOutputFieldName(fieldName);
+    auto probeOutput = probe->Execute(inputDataset);
+
+    return VtkmModule::prepareOutputField(probeOutput, inputGrid, inputField, fieldName, outputGrid);
 }
