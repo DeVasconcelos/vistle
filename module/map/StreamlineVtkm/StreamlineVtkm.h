@@ -3,9 +3,13 @@
 
 #include <vistle/vtkm/vtkm_module.h>
 
-// TODO: find out why we get an error message when using more than 1x1x1 blocks
+// TODO: find out why we get an error message when using more than 4x1x1 blocks
+//       --> I assume because the Streamline filter can't execute on partitions in
+//           concurrent threads seeing how CanThread() returns false...
 // TODO: add Line as StartStyle
 // TODO: calculate starting points on the GPU
+// TODO: is it possible to also do backwards or bidirectional integration (like in Tracer)?
+// TODO: I don't like that we have to convert input dataset + field again in prepareOutputField
 class StreamlineVtkm: public vistle::VtkmModule {
 public:
     StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm);

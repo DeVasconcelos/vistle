@@ -41,10 +41,14 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const vistle::Port *port, cons
                                                   const vistle::DataBase::const_ptr &field, std::string &fieldName,
                                                   viskores::cont::DataSet &dataset) const
 {
-    if (auto in = Vec<Scalar, 3>::as(field))
-        return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
+    if (port->getName() == "data_in") {
+        if (auto in = Vec<Scalar, 3>::as(field))
+            return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
 
-    return Error("Error: Input field must be a 3D vector field!");
+        return Error("Error: Input field must be a 3D vector field!");
+    }
+
+    return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
 }
 
 std::vector<Vector3> calculateStartingPoint(Index numpoints, const Vector3 &startpoint1, const Vector3 &startpoint2,
