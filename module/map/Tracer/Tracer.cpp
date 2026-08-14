@@ -535,6 +535,12 @@ bool Tracer::reduce(int timestep)
             }
         }
     }
+
+    for (auto i = 0; i < startpoints.size(); i++)
+    {
+        auto point = startpoints[i];
+        std::cout << "VISTLE: Adding seed point " << i << ": " << point[0] << ", " << point[1] << ", " << point[2] << std::endl;
+    }
     Index numparticles = numpoints;
     if (traceDirection == Both) {
         numparticles *= 2;

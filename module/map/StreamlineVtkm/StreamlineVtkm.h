@@ -3,13 +3,19 @@
 
 #include <vistle/vtkm/vtkm_module.h>
 
+// TODO: find out why we get an error message when using more than 1x1x1 blocks
+// TODO: add Line as StartStyle
+// TODO: calculate starting points on the GPU
 class StreamlineVtkm: public vistle::VtkmModule {
 public:
     StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm);
 
 private:
+    vistle::IntParameter *m_integrationMethod;
     vistle::IntParameter *m_numberOfPoints;
     vistle::IntParameter *m_numberOfSteps;
+    vistle::IntParameter *m_startStyle;
+
     vistle::FloatParameter *m_stepSize;
 
     vistle::VectorParameter *m_direction;

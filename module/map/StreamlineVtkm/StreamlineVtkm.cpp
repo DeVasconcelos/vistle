@@ -2,22 +2,35 @@
 #include <viskores/filter/flow/Streamline.h>
 #include <viskores/Particle.h>
 
+#include <vistle/util/enum.h>
+
 #include "StreamlineVtkm.h"
 
 MODULE_MAIN(StreamlineVtkm)
 
 using namespace vistle;
 
+DEFINE_ENUM_WITH_STRING_CONVERSIONS(IntegrationMethod, (RK4)(Euler))
+DEFINE_ENUM_WITH_STRING_CONVERSIONS(StartStyle, (Plane))
+
 StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm)
 : VtkmModule(name, moduleID, comm, 3, MappedDataHandling::Require)
 {
-    m_numberOfPoints = addIntParameter("number_of_points", "number of seed points", 4);
-    m_numberOfSteps = addIntParameter("number_of_steps", "number of integration steps", 100);
-    m_stepSize = addFloatParameter("step_size", "integration step size", 0.1f);
-
-    m_direction = addVectorParameter("direction", "tracing direction", ParamVector(0, 0, 1));
+    setCurrentParameterGroup("Seed Points");
+    m_numberOfPoints = addIntParameter("number_of_seeds", "number of seed points", 2);
+    m_startStyle = addIntParameter("start_style", "initial particle position configuration", StartStyle::Plane, Parameter::Choice);
+    V_ENUM_SET_CHOICES_SCOPE(m_startStyle, StartStyle, );
     m_startPoint1 = addVectorParameter("startpoint1", "1st initial point", ParamVector(0, 0.2, 0));
     m_startPoint2 = addVectorParameter("startpoint2", "2nd initial point", ParamVector(1, 0, 0));
+    m_direction = addVectorParameter("direction", "tracing direction", ParamVector(0, 0, 1));
+
+    setCurrentParameterGroup("Stop Conditions");
+    m_numberOfSteps = addIntParameter("steps_max", "maximum number of integration steps", 100);
+
+    setCurrentParameterGroup("Step Length Control");
+    m_integrationMethod = addIntParameter("integration_method", "integration method", IntegrationMethod::RK4, Parameter::Choice);
+    V_ENUM_SET_CHOICES_SCOPE(m_integrationMethod, IntegrationMethod, );
+    m_stepSize = addFloatParameter("step_size", "integration step size", 0.1f);
 }
 
 ModuleStatusPtr StreamlineVtkm::prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid,
@@ -77,19 +90,27 @@ std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
 {
     auto filter = std::make_unique<viskores::filter::flow::Streamline>();
 
-    auto numPoints = m_numberOfPoints->getValue();
-    auto points = calculateStartingPoint(numPoints, m_startPoint1->getValue(), m_startPoint2->getValue(),
-                                         m_direction->getValue());
+    auto points = calculateStartingPoint(m_numberOfPoints->getValue(), m_startPoint1->getValue(),
+                                         m_startPoint2->getValue(), m_direction->getValue());
 
 
+    auto numSeeds = points.size();
     viskores::cont::ArrayHandle<viskores::Particle> seedArray;
-    seedArray.Allocate(numPoints);
-    for (Index i = 0; i < numPoints; i++)
-        seedArray.WritePortal().Set(i, viskores::Particle({points[i][0], points[i][1], points[i][2]}, i));
+    seedArray.Allocate(numSeeds);
+
+    for (Index i = 0; i < numSeeds; i++) {
+        auto point = points[i];
+        seedArray.WritePortal().Set(i, viskores::Particle({point[0], point[1], point[2]}, i));
+    }
 
     filter->SetStepSize(m_stepSize->getValue());
     filter->SetNumberOfSteps(m_numberOfSteps->getValue());
     filter->SetSeeds(seedArray);
+
+    if (m_integrationMethod->getValue() == IntegrationMethod::Euler)
+        filter->SetSolverEuler();
+    else
+        filter->SetSolverRK4();
 
     return filter;
 }
@@ -100,5 +121,14 @@ vistle::DataBase::ptr StreamlineVtkm::prepareOutputField(const viskores::cont::D
                                                          const std::string &fieldName,
                                                          const vistle::Object::const_ptr &outputGrid) const
 {
+    /*  auto mapped = inputField->clone();
+    updateMeta(mapped);
+    auto mapping = mapped->mapping();
+    mapped->copyAttributes(inputField);
+    mapped->setMapping(mapping);
+    if (outputGrid)
+        mapped->setGrid(outputGrid);
+    return mapped; */
+
     return nullptr;
 }
