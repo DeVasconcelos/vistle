@@ -1,7 +1,5 @@
-#include <viskores/cont/ArrayHandle.h>
 #include <viskores/filter/flow/Streamline.h>
 #include <viskores/filter/resampling/Probe.h>
-#include <viskores/Particle.h>
 
 #include <vistle/util/enum.h>
 #include <vistle/vtkm/convert.h>
@@ -13,7 +11,7 @@ MODULE_MAIN(StreamlineVtkm)
 using namespace vistle;
 
 DEFINE_ENUM_WITH_STRING_CONVERSIONS(IntegrationMethod, (RK4)(Euler))
-DEFINE_ENUM_WITH_STRING_CONVERSIONS(StartStyle, (Plane))
+DEFINE_ENUM_WITH_STRING_CONVERSIONS(StartStyle, (Line)(Plane))
 
 StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm)
 : VtkmModule(name, moduleID, comm, 3, MappedDataHandling::Require)
@@ -21,7 +19,7 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
     setCurrentParameterGroup("Seed Points");
     m_numberOfPoints = addIntParameter("number_of_seeds", "number of seed points", 2);
     m_startStyle =
-        addIntParameter("start_style", "initial particle position configuration", StartStyle::Plane, Parameter::Choice);
+        addIntParameter("start_style", "initial particle position configuration", StartStyle::Line, Parameter::Choice);
     V_ENUM_SET_CHOICES_SCOPE(m_startStyle, StartStyle, );
     m_startPoint1 = addVectorParameter("startpoint1", "1st initial point", ParamVector(0, 0.2, 0));
     m_startPoint2 = addVectorParameter("startpoint2", "2nd initial point", ParamVector(1, 0, 0));
@@ -35,6 +33,14 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
         addIntParameter("integration_method", "integration method", IntegrationMethod::RK4, Parameter::Choice);
     V_ENUM_SET_CHOICES_SCOPE(m_integrationMethod, IntegrationMethod, );
     m_stepSize = addFloatParameter("step_size", "integration step size", 0.1f);
+}
+
+bool StreamlineVtkm::changeParameter(const vistle::Parameter *param)
+{
+    if (param == m_startStyle)
+        setParameterReadOnly(m_direction, m_startStyle->getValue() != Plane);
+
+    return Module::changeParameter(param);
 }
 
 ModuleStatusPtr StreamlineVtkm::prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid,
@@ -51,8 +57,26 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const vistle::Port *port, cons
     return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
 }
 
-std::vector<Vector3> calculateStartingPoint(Index numpoints, const Vector3 &startpoint1, const Vector3 &startpoint2,
-                                            const Vector3 &direction)
+std::vector<Vector3> calculateStartingPointsWithLine(Index numpoints, const Vector3 &startpoint1,
+                                                     const Vector3 &startpoint2)
+{
+    std::vector<Vector3> startpoints;
+    startpoints.resize(numpoints);
+
+    if (numpoints == 1) {
+        startpoints[0] = (startpoint1 + startpoint2) * 0.5;
+    } else {
+        Vector3 delta = (startpoint2 - startpoint1) / (numpoints - 1);
+        for (Index i = 0; i < numpoints; i++) {
+            startpoints[i] = startpoint1 + i * delta;
+        }
+    }
+
+    return startpoints;
+}
+
+std::vector<Vector3> calculateStartingPointsWithPlane(Index numpoints, const Vector3 &startpoint1,
+                                                      const Vector3 &startpoint2, const Vector3 &direction)
 {
     std::vector<Vector3> startpoints;
     auto normedDirection = direction;
@@ -94,12 +118,15 @@ std::vector<Vector3> calculateStartingPoint(Index numpoints, const Vector3 &star
     return startpoints;
 }
 
-std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
+viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray() const
 {
-    auto filter = std::make_unique<viskores::filter::flow::Streamline>();
-
-    auto points = calculateStartingPoint(m_numberOfPoints->getValue(), m_startPoint1->getValue(),
-                                         m_startPoint2->getValue(), m_direction->getValue());
+    std::vector<Vector3> points;
+    if (m_startStyle->getValue() == StartStyle::Line)
+        points = calculateStartingPointsWithLine(m_numberOfPoints->getValue(), m_startPoint1->getValue(),
+                                                 m_startPoint2->getValue());
+    else
+        points = calculateStartingPointsWithPlane(m_numberOfPoints->getValue(), m_startPoint1->getValue(),
+                                                  m_startPoint2->getValue(), m_direction->getValue());
 
 
     auto numSeeds = points.size();
@@ -111,8 +138,16 @@ std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
         seedArray.WritePortal().Set(i, viskores::Particle({point[0], point[1], point[2]}, i));
     }
 
+    return seedArray;
+}
+
+std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
+{
+    auto filter = std::make_unique<viskores::filter::flow::Streamline>();
+
     filter->SetStepSize(m_stepSize->getValue());
     filter->SetNumberOfSteps(m_numberOfSteps->getValue());
+    auto seedArray = createSeedArray();
     filter->SetSeeds(seedArray);
 
     if (m_integrationMethod->getValue() == IntegrationMethod::Euler)
