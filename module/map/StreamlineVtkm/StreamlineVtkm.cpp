@@ -57,28 +57,30 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const vistle::Port *port, cons
     return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
 }
 
-std::vector<Vector3> calculateStartingPointsWithLine(Index numpoints, const Vector3 &startpoint1,
-                                                     const Vector3 &startpoint2)
+viskores::cont::ArrayHandle<viskores::Particle> calculateSeedsWithLine(Index numpoints, const Vector3 &startpoint1,
+                                                                       const Vector3 &startpoint2)
 {
-    std::vector<Vector3> startpoints;
-    startpoints.resize(numpoints);
+    viskores::cont::ArrayHandle<viskores::Particle> seedArray;
+    seedArray.Allocate(numpoints);
 
     if (numpoints == 1) {
-        startpoints[0] = (startpoint1 + startpoint2) * 0.5;
+        auto point = (startpoint1 + startpoint2) * 0.5;
+        seedArray.WritePortal().Set(0, viskores::Particle({point[0], point[1], point[2]}, 0));
     } else {
         Vector3 delta = (startpoint2 - startpoint1) / (numpoints - 1);
         for (Index i = 0; i < numpoints; i++) {
-            startpoints[i] = startpoint1 + i * delta;
+            auto point = startpoint1 + i * delta;
+            seedArray.WritePortal().Set(i, viskores::Particle({point[0], point[1], point[2]}, i));
         }
     }
 
-    return startpoints;
+    return seedArray;
 }
 
-std::vector<Vector3> calculateStartingPointsWithPlane(Index numpoints, const Vector3 &startpoint1,
-                                                      const Vector3 &startpoint2, const Vector3 &direction)
+viskores::cont::ArrayHandle<viskores::Particle> calculateSeedsWithPlane(Index numpoints, const Vector3 &startpoint1,
+                                                                        const Vector3 &startpoint2,
+                                                                        const Vector3 &direction)
 {
-    std::vector<Vector3> startpoints;
     auto normedDirection = direction;
     normedDirection.normalize();
     Vector3 v = startpoint2 - startpoint1;
@@ -105,40 +107,29 @@ std::vector<Vector3> calculateStartingPointsWithPlane(Index numpoints, const Vec
     }
 
     numpoints = n0 * n1;
-    startpoints.resize(numpoints);
+    viskores::cont::ArrayHandle<viskores::Particle> seedArray;
+    seedArray.Allocate(numpoints);
 
     Scalar s0 = Scalar(1) / (n0 - 1);
     Scalar s1 = Scalar(1) / (n1 - 1);
     for (Index i = 0; i < n0; ++i) {
         for (Index j = 0; j < n1; ++j) {
-            startpoints[i * n1 + j] = startpoint1 + v0 * s0 * i + v1 * s1 * j;
+            auto point = startpoint1 + v0 * s0 * i + v1 * s1 * j;
+            seedArray.WritePortal().Set(i * n1 + j, viskores::Particle({point[0], point[1], point[2]}, i * n1 + j));
         }
     }
 
-    return startpoints;
+    return seedArray;
 }
 
 viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray() const
 {
-    std::vector<Vector3> points;
     if (m_startStyle->getValue() == StartStyle::Line)
-        points = calculateStartingPointsWithLine(m_numberOfPoints->getValue(), m_startPoint1->getValue(),
-                                                 m_startPoint2->getValue());
+        return calculateSeedsWithLine(m_numberOfPoints->getValue(), m_startPoint1->getValue(),
+                                      m_startPoint2->getValue());
     else
-        points = calculateStartingPointsWithPlane(m_numberOfPoints->getValue(), m_startPoint1->getValue(),
-                                                  m_startPoint2->getValue(), m_direction->getValue());
-
-
-    auto numSeeds = points.size();
-    viskores::cont::ArrayHandle<viskores::Particle> seedArray;
-    seedArray.Allocate(numSeeds);
-
-    for (Index i = 0; i < numSeeds; i++) {
-        auto point = points[i];
-        seedArray.WritePortal().Set(i, viskores::Particle({point[0], point[1], point[2]}, i));
-    }
-
-    return seedArray;
+        return calculateSeedsWithPlane(m_numberOfPoints->getValue(), m_startPoint1->getValue(),
+                                       m_startPoint2->getValue(), m_direction->getValue());
 }
 
 std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
@@ -147,6 +138,7 @@ std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
 
     filter->SetStepSize(m_stepSize->getValue());
     filter->SetNumberOfSteps(m_numberOfSteps->getValue());
+
     auto seedArray = createSeedArray();
     filter->SetSeeds(seedArray);
 
