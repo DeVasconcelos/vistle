@@ -1,6 +1,6 @@
 #include <viskores/filter/flow/Streamline.h>
 #include <viskores/filter/resampling/Probe.h>
-
+#include <viskores/VectorAnalysis.h>
 #include <viskores/worklet/DispatcherMapField.h>
 #include <viskores/worklet/WorkletMapField.h>
 
@@ -60,8 +60,8 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const vistle::Port *port, cons
     return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
 }
 
-viskores::cont::ArrayHandle<viskores::Particle> generateSeedsOnLine(Index numSeeds, const Vector3 &startpoint1,
-                                                                    const Vector3 &startpoint2)
+viskores::cont::ArrayHandle<viskores::Particle>
+generateSeedsOnLine(viskores::Id numSeeds, const viskores::Vec3f &startpoint1, const viskores::Vec3f &startpoint2)
 {
     viskores::cont::ArrayHandle<viskores::Particle> seedArray;
     seedArray.Allocate(numSeeds);
@@ -70,8 +70,8 @@ viskores::cont::ArrayHandle<viskores::Particle> generateSeedsOnLine(Index numSee
         auto point = (startpoint1 + startpoint2) * 0.5;
         seedArray.WritePortal().Set(0, viskores::Particle({point[0], point[1], point[2]}, 0));
     } else {
-        Vector3 delta = (startpoint2 - startpoint1) / (numSeeds - 1);
-        for (Index i = 0; i < numSeeds; i++) {
+        auto delta = (startpoint2 - startpoint1) / (numSeeds - 1);
+        for (auto i = 0; i < numSeeds; i++) {
             auto point = startpoint1 + i * delta;
             seedArray.WritePortal().Set(i, viskores::Particle({point[0], point[1], point[2]}, i));
         }
@@ -80,27 +80,28 @@ viskores::cont::ArrayHandle<viskores::Particle> generateSeedsOnLine(Index numSee
     return seedArray;
 }
 
-void computePlaneSpans(const Vector3 &startpoint1, const Vector3 &startpoint2, const Vector3 &direction,
-                       Vector3 &parallelSpan, Vector3 &orthogonalSpan)
+void computePlaneSpans(const viskores::Vec3f &startpoint1, const viskores::Vec3f &startpoint2,
+                       const viskores::Vec3f &direction, viskores::Vec3f &parallelSpan, viskores::Vec3f &orthogonalSpan)
 {
     auto normedDirection = direction;
-    normedDirection.normalize();
-    Vector3 seedSpan = startpoint2 - startpoint1;
-    parallelSpan = normedDirection * normedDirection.dot(seedSpan);
+    viskores::Normalize(normedDirection);
+    auto seedSpan = startpoint2 - startpoint1;
+    parallelSpan = normedDirection * viskores::Dot(normedDirection, seedSpan);
     orthogonalSpan = seedSpan - parallelSpan;
 }
 
-void computeSeedCountPerSpan(Index numSeeds, Scalar length0, Scalar length1, Index &count0, Index &count1)
+void computeSeedCountPerSpan(viskores::Id numSeeds, viskores::FloatDefault length0, viskores::FloatDefault length1,
+                             viskores::Id &count0, viskores::Id &count1)
 {
     if (length0 > length1) {
-        count1 = Index(sqrt(numSeeds * length1 / length0)) + 1;
+        count1 = viskores::Id(viskores::Sqrt(numSeeds * length1 / length0)) + 1;
         if (count1 <= 1)
             count1 = 2;
         count0 = numSeeds / count1;
         if (count0 <= 1)
             count0 = 2;
     } else {
-        count0 = Index(sqrt(numSeeds * length0 / length1)) + 1;
+        count0 = viskores::Id(viskores::Sqrt(numSeeds * length0 / length1)) + 1;
         if (count0 <= 1)
             count0 = 2;
         count1 = numSeeds / count0;
@@ -113,10 +114,8 @@ class GenerateSeedsOnPlaneWorklet: public viskores::worklet::WorkletMapField {
 public:
     VISKORES_CONT
     GenerateSeedsOnPlaneWorklet(viskores::Id numSeeds, viskores::Id n0, viskores::Id n1,
-                                const viskores::Vec<viskores::FloatDefault, 3> &startpoint1,
-                                const viskores::Vec<viskores::FloatDefault, 3> &startpoint2,
-                                const viskores::Vec<viskores::FloatDefault, 3> &parallelSpan,
-                                const viskores::Vec<viskores::FloatDefault, 3> &orthogonalSpan)
+                                const viskores::Vec3f &startpoint1, const viskores::Vec3f &startpoint2,
+                                const viskores::Vec3f &parallelSpan, const viskores::Vec3f &orthogonalSpan)
     : m_numSeeds(numSeeds)
     , m_n0(n0)
     , m_n1(n1)
@@ -146,34 +145,28 @@ private:
     viskores::Id m_n0;
     viskores::Id m_n1;
 
-    viskores::Vec<viskores::FloatDefault, 3> m_startpoint1;
-    viskores::Vec<viskores::FloatDefault, 3> m_startpoint2;
-    viskores::Vec<viskores::FloatDefault, 3> m_parallelSpan;
-    viskores::Vec<viskores::FloatDefault, 3> m_orthogonalSpan;
+    viskores::Vec3f m_startpoint1;
+    viskores::Vec3f m_startpoint2;
+    viskores::Vec3f m_parallelSpan;
+    viskores::Vec3f m_orthogonalSpan;
 };
 
-viskores::cont::ArrayHandle<viskores::Particle>
-generateSeedsOnPlane(Index numSeeds, const Vector3 &startpoint1, const Vector3 &startpoint2, const Vector3 &direction)
+viskores::cont::ArrayHandle<viskores::Particle> generateSeedsOnPlane(Index numSeeds, const viskores::Vec3f &startpoint1,
+                                                                     const viskores::Vec3f &startpoint2,
+                                                                     const viskores::Vec3f &direction)
 {
-    Vector3 parallelSpan, orthogonalSpan;
+    viskores::Vec3f parallelSpan, orthogonalSpan;
     computePlaneSpans(startpoint1, startpoint2, direction, parallelSpan, orthogonalSpan);
 
-    Index n0, n1;
-    computeSeedCountPerSpan(numSeeds, parallelSpan.norm(), orthogonalSpan.norm(), n0, n1);
+    viskores::Id n0, n1;
+    computeSeedCountPerSpan(numSeeds, viskores::Magnitude(parallelSpan), viskores::Magnitude(orthogonalSpan), n0, n1);
 
     numSeeds = n0 * n1;
     viskores::cont::ArrayHandle<viskores::Particle> seedArray;
     seedArray.Allocate(numSeeds);
 
-    // TODO: have them be viskores type from the get-go
-    viskores::Vec<viskores::FloatDefault, 3> startpoint1Vtkm(startpoint1[0], startpoint1[1], startpoint1[2]);
-    viskores::Vec<viskores::FloatDefault, 3> startpoint2Vtkm(startpoint2[0], startpoint2[1], startpoint2[2]);
-    viskores::Vec<viskores::FloatDefault, 3> parallelSpanVtkm(parallelSpan[0], parallelSpan[1], parallelSpan[2]);
-    viskores::Vec<viskores::FloatDefault, 3> orthogonalSpanVtkm(orthogonalSpan[0], orthogonalSpan[1],
-                                                                orthogonalSpan[2]);
     viskores::worklet::DispatcherMapField<GenerateSeedsOnPlaneWorklet>(
-        GenerateSeedsOnPlaneWorklet(numSeeds, n0, n1, startpoint1Vtkm, startpoint2Vtkm, parallelSpanVtkm,
-                                    orthogonalSpanVtkm))
+        GenerateSeedsOnPlaneWorklet(numSeeds, n0, n1, startpoint1, startpoint2, parallelSpan, orthogonalSpan))
         .Invoke(seedArray);
 
     return seedArray;
@@ -181,11 +174,18 @@ generateSeedsOnPlane(Index numSeeds, const Vector3 &startpoint1, const Vector3 &
 
 viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray() const
 {
-    if (m_startStyle->getValue() == StartStyle::Line)
-        return generateSeedsOnLine(m_numberOfPoints->getValue(), m_startPoint1->getValue(), m_startPoint2->getValue());
-    else
-        return generateSeedsOnPlane(m_numberOfPoints->getValue(), m_startPoint1->getValue(), m_startPoint2->getValue(),
-                                    m_direction->getValue());
+    viskores::Vec3f startpoint1{m_startPoint1->getValue()[0], m_startPoint1->getValue()[1],
+                                m_startPoint1->getValue()[2]};
+    viskores::Vec3f startpoint2{m_startPoint2->getValue()[0], m_startPoint2->getValue()[1],
+                                m_startPoint2->getValue()[2]};
+
+    if (m_startStyle->getValue() == StartStyle::Line) {
+        return generateSeedsOnLine(m_numberOfPoints->getValue(), startpoint1, startpoint2);
+
+    } else {
+        viskores::Vec3f direction{m_direction->getValue()[0], m_direction->getValue()[1], m_direction->getValue()[2]};
+        return generateSeedsOnPlane(m_numberOfPoints->getValue(), startpoint1, startpoint2, direction);
+    }
 }
 
 std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
