@@ -1,11 +1,11 @@
 #include <viskores/filter/flow/Streamline.h>
 #include <viskores/filter/resampling/Probe.h>
 #include <viskores/VectorAnalysis.h>
-#include <viskores/worklet/DispatcherMapField.h>
-#include <viskores/worklet/WorkletMapField.h>
 
 #include <vistle/util/enum.h>
 #include <vistle/vtkm/convert.h>
+
+#include "worklet/GenerateSeeds.h"
 
 #include "StreamlineVtkm.h"
 
@@ -60,39 +60,6 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const vistle::Port *port, cons
     return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
 }
 
-class GenerateSeedsOnLineWorklet: public viskores::worklet::WorkletMapField {
-public:
-    VISKORES_CONT GenerateSeedsOnLineWorklet(viskores::Id numSeeds, const viskores::Vec3f &startpoint1,
-                                             const viskores::Vec3f &startpoint2)
-    : m_numSeeds(numSeeds)
-    , m_startpoint1(startpoint1)
-    , m_startpoint2(startpoint2)
-    , m_delta((m_startpoint2 - m_startpoint1) / (m_numSeeds - 1))
-    {}
-
-    VISKORES_CONT GenerateSeedsOnLineWorklet(viskores::Id numSeeds, const viskores::Vec3f &startpoint1,
-                                             const viskores::Vec3f &startpoint2, const viskores::Vec3f &delta)
-    : m_numSeeds(numSeeds), m_startpoint1(startpoint1), m_startpoint2(startpoint2), m_delta(delta)
-    {}
-
-    using ControlSignature = void(FieldOut seeds);
-    using ExecutionSignature = void(_1, WorkIndex);
-
-    VISKORES_EXEC void operator()(viskores::Particle &seed, const viskores::Id &index) const
-    {
-        seed = viskores::Particle({m_startpoint1[0] + index * m_delta[0], m_startpoint1[1] + index * m_delta[1],
-                                   m_startpoint1[2] + index * m_delta[2]},
-                                  index);
-    }
-
-private:
-    viskores::Id m_numSeeds;
-
-    viskores::Vec3f m_startpoint1;
-    viskores::Vec3f m_startpoint2;
-    viskores::Vec3f m_delta;
-};
-
 viskores::cont::ArrayHandle<viskores::Particle>
 generateSeedsOnLine(viskores::Id numSeeds, const viskores::Vec3f &startpoint1, const viskores::Vec3f &startpoint2)
 {
@@ -140,47 +107,6 @@ void computeSeedCountPerSpan(viskores::Id numSeeds, viskores::FloatDefault lengt
             count1 = 2;
     }
 }
-
-class GenerateSeedsOnPlaneWorklet: public viskores::worklet::WorkletMapField {
-public:
-    VISKORES_CONT
-    GenerateSeedsOnPlaneWorklet(viskores::Id numSeeds, viskores::Id n0, viskores::Id n1,
-                                const viskores::Vec3f &startpoint1, const viskores::Vec3f &startpoint2,
-                                const viskores::Vec3f &parallelSpan, const viskores::Vec3f &orthogonalSpan)
-    : m_numSeeds(numSeeds)
-    , m_n0(n0)
-    , m_n1(n1)
-    , m_startpoint1(startpoint1)
-    , m_startpoint2(startpoint2)
-    , m_parallelSpan(parallelSpan)
-    , m_orthogonalSpan(orthogonalSpan)
-    {}
-
-    using ControlSignature = void(FieldOut seeds);
-    using ExecutionSignature = void(_1, WorkIndex);
-
-    VISKORES_EXEC void operator()(viskores::Particle &seed, const viskores::Id &index) const
-    {
-        viskores::Id i = index / m_n1;
-        viskores::Id j = index % m_n1;
-
-        Scalar s0 = Scalar(1) / (m_n0 - 1);
-        Scalar s1 = Scalar(1) / (m_n1 - 1);
-        auto point = m_startpoint1 + m_parallelSpan * s0 * i + m_orthogonalSpan * s1 * j;
-        seed = viskores::Particle({point[0], point[1], point[2]}, index);
-    }
-
-private:
-    viskores::Id m_numSeeds;
-
-    viskores::Id m_n0;
-    viskores::Id m_n1;
-
-    viskores::Vec3f m_startpoint1;
-    viskores::Vec3f m_startpoint2;
-    viskores::Vec3f m_parallelSpan;
-    viskores::Vec3f m_orthogonalSpan;
-};
 
 viskores::cont::ArrayHandle<viskores::Particle> generateSeedsOnPlane(Index numSeeds, const viskores::Vec3f &startpoint1,
                                                                      const viskores::Vec3f &startpoint2,
