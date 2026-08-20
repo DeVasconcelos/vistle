@@ -10,7 +10,7 @@
 //       --> I assume because the Streamline filter can't execute on partitions in
 //           concurrent threads seeing how CanThread() returns false...
 // TODO: add max points?
-// TODO: narrow conversion from vistle::Float to viskores::FloatDefault (or vistle::FLoat to Particles)
+// TODO: narrow conversion from vistle::Float to viskores::FloatDefault (or vistle::Float to Particles)
 // TODO: calculate starting points on the GPU
 // TODO: is it possible to also do backwards or bidirectional integration (like in Tracer)?
 // TODO: I don't like that we have to convert input dataset + field again in prepareOutputField

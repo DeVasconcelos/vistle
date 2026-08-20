@@ -60,6 +60,39 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const vistle::Port *port, cons
     return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
 }
 
+class GenerateSeedsOnLineWorklet: public viskores::worklet::WorkletMapField {
+public:
+    VISKORES_CONT GenerateSeedsOnLineWorklet(viskores::Id numSeeds, const viskores::Vec3f &startpoint1,
+                                             const viskores::Vec3f &startpoint2)
+    : m_numSeeds(numSeeds)
+    , m_startpoint1(startpoint1)
+    , m_startpoint2(startpoint2)
+    , m_delta((m_startpoint2 - m_startpoint1) / (m_numSeeds - 1))
+    {}
+
+    VISKORES_CONT GenerateSeedsOnLineWorklet(viskores::Id numSeeds, const viskores::Vec3f &startpoint1,
+                                             const viskores::Vec3f &startpoint2, const viskores::Vec3f &delta)
+    : m_numSeeds(numSeeds), m_startpoint1(startpoint1), m_startpoint2(startpoint2), m_delta(delta)
+    {}
+
+    using ControlSignature = void(FieldOut seeds);
+    using ExecutionSignature = void(_1, WorkIndex);
+
+    VISKORES_EXEC void operator()(viskores::Particle &seed, const viskores::Id &index) const
+    {
+        seed = viskores::Particle({m_startpoint1[0] + index * m_delta[0], m_startpoint1[1] + index * m_delta[1],
+                                   m_startpoint1[2] + index * m_delta[2]},
+                                  index);
+    }
+
+private:
+    viskores::Id m_numSeeds;
+
+    viskores::Vec3f m_startpoint1;
+    viskores::Vec3f m_startpoint2;
+    viskores::Vec3f m_delta;
+};
+
 viskores::cont::ArrayHandle<viskores::Particle>
 generateSeedsOnLine(viskores::Id numSeeds, const viskores::Vec3f &startpoint1, const viskores::Vec3f &startpoint2)
 {
@@ -70,11 +103,9 @@ generateSeedsOnLine(viskores::Id numSeeds, const viskores::Vec3f &startpoint1, c
         auto point = (startpoint1 + startpoint2) * 0.5;
         seedArray.WritePortal().Set(0, viskores::Particle({point[0], point[1], point[2]}, 0));
     } else {
-        auto delta = (startpoint2 - startpoint1) / (numSeeds - 1);
-        for (auto i = 0; i < numSeeds; i++) {
-            auto point = startpoint1 + i * delta;
-            seedArray.WritePortal().Set(i, viskores::Particle({point[0], point[1], point[2]}, i));
-        }
+        viskores::worklet::DispatcherMapField<GenerateSeedsOnLineWorklet>(
+            GenerateSeedsOnLineWorklet(numSeeds, startpoint1, startpoint2))
+            .Invoke(seedArray);
     }
 
     return seedArray;
