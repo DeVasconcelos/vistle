@@ -6,6 +6,8 @@
 #include <viskores/worklet/DispatcherMapField.h>
 #include <viskores/worklet/WorkletMapField.h>
 
+namespace vistle {
+
 class GenerateSeedsOnPlaneWorklet: public viskores::worklet::WorkletMapField {
 public:
     VISKORES_CONT
@@ -66,6 +68,14 @@ private:
     viskores::Vec3f m_delta;
 };
 
+viskores::cont::ArrayHandle<viskores::Particle> generateSeedsOnPlane(viskores::Id numSeeds,
+                                                                     const viskores::Vec3f &startpoint1,
+                                                                     const viskores::Vec3f &startpoint2,
+                                                                     const viskores::Vec3f &direction);
 
+viskores::cont::ArrayHandle<viskores::Particle>
+generateSeedsOnLine(viskores::Id numSeeds, const viskores::Vec3f &startpoint1, const viskores::Vec3f &startpoint2);
+
+}; // namespace vistle
 
 #endif // VISTLE_STREAMLINEVTKM_WORKLET_GENERATESEEDS_H

@@ -38,7 +38,7 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
     m_stepSize = addFloatParameter("step_size", "integration step size", 0.1f);
 }
 
-bool StreamlineVtkm::changeParameter(const vistle::Parameter *param)
+bool StreamlineVtkm::changeParameter(const Parameter *param)
 {
     if (param == m_startStyle)
         setParameterReadOnly(m_direction, m_startStyle->getValue() != Plane);
@@ -46,8 +46,8 @@ bool StreamlineVtkm::changeParameter(const vistle::Parameter *param)
     return Module::changeParameter(param);
 }
 
-ModuleStatusPtr StreamlineVtkm::prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid,
-                                                  const vistle::DataBase::const_ptr &field, std::string &fieldName,
+ModuleStatusPtr StreamlineVtkm::prepareInputField(const Port *port, const Object::const_ptr &grid,
+                                                  const DataBase::const_ptr &field, std::string &fieldName,
                                                   viskores::cont::DataSet &dataset) const
 {
     if (port->getName() == "data_in") {
@@ -58,75 +58,6 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const vistle::Port *port, cons
     }
 
     return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
-}
-
-viskores::cont::ArrayHandle<viskores::Particle>
-generateSeedsOnLine(viskores::Id numSeeds, const viskores::Vec3f &startpoint1, const viskores::Vec3f &startpoint2)
-{
-    viskores::cont::ArrayHandle<viskores::Particle> seedArray;
-    seedArray.Allocate(numSeeds);
-
-    if (numSeeds == 1) {
-        auto point = (startpoint1 + startpoint2) * 0.5;
-        seedArray.WritePortal().Set(0, viskores::Particle({point[0], point[1], point[2]}, 0));
-    } else {
-        viskores::worklet::DispatcherMapField<GenerateSeedsOnLineWorklet>(
-            GenerateSeedsOnLineWorklet(numSeeds, startpoint1, startpoint2))
-            .Invoke(seedArray);
-    }
-
-    return seedArray;
-}
-
-void computePlaneSpans(const viskores::Vec3f &startpoint1, const viskores::Vec3f &startpoint2,
-                       const viskores::Vec3f &direction, viskores::Vec3f &parallelSpan, viskores::Vec3f &orthogonalSpan)
-{
-    auto normedDirection = direction;
-    viskores::Normalize(normedDirection);
-    auto seedSpan = startpoint2 - startpoint1;
-    parallelSpan = normedDirection * viskores::Dot(normedDirection, seedSpan);
-    orthogonalSpan = seedSpan - parallelSpan;
-}
-
-void computeSeedCountPerSpan(viskores::Id numSeeds, viskores::FloatDefault length0, viskores::FloatDefault length1,
-                             viskores::Id &count0, viskores::Id &count1)
-{
-    if (length0 > length1) {
-        count1 = viskores::Id(viskores::Sqrt(numSeeds * length1 / length0)) + 1;
-        if (count1 <= 1)
-            count1 = 2;
-        count0 = numSeeds / count1;
-        if (count0 <= 1)
-            count0 = 2;
-    } else {
-        count0 = viskores::Id(viskores::Sqrt(numSeeds * length0 / length1)) + 1;
-        if (count0 <= 1)
-            count0 = 2;
-        count1 = numSeeds / count0;
-        if (count1 <= 1)
-            count1 = 2;
-    }
-}
-
-viskores::cont::ArrayHandle<viskores::Particle> generateSeedsOnPlane(Index numSeeds, const viskores::Vec3f &startpoint1,
-                                                                     const viskores::Vec3f &startpoint2,
-                                                                     const viskores::Vec3f &direction)
-{
-    viskores::Vec3f parallelSpan, orthogonalSpan;
-    computePlaneSpans(startpoint1, startpoint2, direction, parallelSpan, orthogonalSpan);
-
-    viskores::Id n0, n1;
-    computeSeedCountPerSpan(numSeeds, viskores::Magnitude(parallelSpan), viskores::Magnitude(orthogonalSpan), n0, n1);
-
-    numSeeds = n0 * n1;
-    viskores::cont::ArrayHandle<viskores::Particle> seedArray;
-    seedArray.Allocate(numSeeds);
-
-    viskores::worklet::DispatcherMapField<GenerateSeedsOnPlaneWorklet>(
-        GenerateSeedsOnPlaneWorklet(numSeeds, n0, n1, startpoint1, startpoint2, parallelSpan, orthogonalSpan))
-        .Invoke(seedArray);
-
-    return seedArray;
 }
 
 viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray() const
@@ -163,11 +94,10 @@ std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
     return filter;
 }
 
-vistle::DataBase::ptr StreamlineVtkm::prepareOutputField(const viskores::cont::DataSet &dataset,
-                                                         const vistle::Object::const_ptr &inputGrid,
-                                                         const vistle::DataBase::const_ptr &inputField,
-                                                         const std::string &fieldName,
-                                                         const vistle::Object::const_ptr &outputGrid) const
+DataBase::ptr StreamlineVtkm::prepareOutputField(const viskores::cont::DataSet &dataset,
+                                                 const Object::const_ptr &inputGrid,
+                                                 const DataBase::const_ptr &inputField, const std::string &fieldName,
+                                                 const Object::const_ptr &outputGrid) const
 {
     // The Streamline filter only returns a geometry of polylines. To match the Tracer behavior, we
     // need to resample the input field onto the output geometry. To keep this on the device, we use

@@ -13,7 +13,6 @@
 // TODO: narrow conversion from vistle::Float to viskores::FloatDefault (or vistle::Float to Particles)
 // TODO: is it possible to also do backwards or bidirectional integration (like in Tracer)?
 // TODO: I don't like that we have to convert input dataset + field again in prepareOutputField
-// TODO: namespaces worklet?
 class StreamlineVtkm: public vistle::VtkmModule {
 public:
     StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm);
