@@ -9,7 +9,6 @@
 // TODO: find out why we get an error message when using more than 4x1x1 blocks
 //       --> I assume because the Streamline filter can't execute on partitions in
 //           concurrent threads seeing how CanThread() returns false...
-// TODO: add max points?
 // TODO: narrow conversion from vistle::Float to viskores::FloatDefault (or vistle::Float to Particles)
 // TODO: is it possible to also do backwards or bidirectional integration (like in Tracer)?
 // TODO: I don't like that we have to convert input dataset + field again in prepareOutputField
@@ -19,15 +18,13 @@ public:
 
 private:
     vistle::IntParameter *m_integrationMethod;
-    vistle::IntParameter *m_numberOfPoints;
-    vistle::IntParameter *m_numberOfSteps;
+    vistle::IntParameter *m_numberOfSeeds, *m_maxNumberOfSeeds, *m_numberOfSteps;
     vistle::IntParameter *m_startStyle;
 
     vistle::FloatParameter *m_stepSize;
 
     vistle::VectorParameter *m_direction;
-    vistle::VectorParameter *m_startPoint1;
-    vistle::VectorParameter *m_startPoint2;
+    vistle::VectorParameter *m_startPoint1, *m_startPoint2;
 
     bool changeParameter(const vistle::Parameter *param) override;
 

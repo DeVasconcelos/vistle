@@ -20,13 +20,18 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
 : VtkmModule(name, moduleID, comm, 3, MappedDataHandling::Require)
 {
     setCurrentParameterGroup("Seed Points");
-    m_numberOfPoints = addIntParameter("number_of_seeds", "number of seed points", 2);
+    const Integer max_no_seeds = 300;
+    m_numberOfSeeds = addIntParameter("number_of_seeds", "number of seed points", 2);
+    setParameterRange(m_numberOfSeeds, (Integer)1, max_no_seeds);
     m_startStyle =
         addIntParameter("start_style", "initial particle position configuration", StartStyle::Line, Parameter::Choice);
     V_ENUM_SET_CHOICES_SCOPE(m_startStyle, StartStyle, );
     m_startPoint1 = addVectorParameter("startpoint1", "1st initial point", ParamVector(0, 0.2, 0));
     m_startPoint2 = addVectorParameter("startpoint2", "2nd initial point", ParamVector(1, 0, 0));
     m_direction = addVectorParameter("direction", "tracing direction", ParamVector(0, 0, 1));
+    m_maxNumberOfSeeds =
+        addIntParameter("max_no_seeds", "maximum number of seeds (for parameter/slider limits)", max_no_seeds);
+    setParameterRange(m_maxNumberOfSeeds, (Integer)2, (Integer)1000000);
 
     setCurrentParameterGroup("Stop Conditions");
     m_numberOfSteps = addIntParameter("steps_max", "maximum number of integration steps", 100);
@@ -40,8 +45,11 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
 
 bool StreamlineVtkm::changeParameter(const Parameter *param)
 {
-    if (param == m_startStyle)
+    if (param == m_startStyle) {
         setParameterReadOnly(m_direction, m_startStyle->getValue() != Plane);
+    } else if (param == m_maxNumberOfSeeds) {
+        setParameterRange(m_numberOfSeeds, (Integer)1, m_maxNumberOfSeeds->getValue());
+    }
 
     return Module::changeParameter(param);
 }
@@ -68,11 +76,11 @@ viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray(
                                 m_startPoint2->getValue()[2]};
 
     if (m_startStyle->getValue() == StartStyle::Line) {
-        return generateSeedsOnLine(m_numberOfPoints->getValue(), startpoint1, startpoint2);
+        return generateSeedsOnLine(m_numberOfSeeds->getValue(), startpoint1, startpoint2);
 
     } else {
         viskores::Vec3f direction{m_direction->getValue()[0], m_direction->getValue()[1], m_direction->getValue()[2]};
-        return generateSeedsOnPlane(m_numberOfPoints->getValue(), startpoint1, startpoint2, direction);
+        return generateSeedsOnPlane(m_numberOfSeeds->getValue(), startpoint1, startpoint2, direction);
     }
 }
 
