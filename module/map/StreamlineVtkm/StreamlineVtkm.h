@@ -21,6 +21,22 @@
 //           integration. So we would have to implement that ourselves.
 namespace vistle {
 
+struct InputData {
+    vistle::Object::const_ptr vistleGrid;
+    viskores::cont::DataSet viskoresDataset;
+
+    std::vector<vistle::DataBase::const_ptr> fields;
+    std::vector<std::string> fieldNames;
+};
+
+struct OutputData {
+    vistle::Object::const_ptr vistleGrid;
+    viskores::cont::DataSet viskoresDataset;
+
+    std::vector<vistle::DataBase::ptr> fields;
+    std::vector<std::string> fieldNames;
+};
+
 class StreamlineVtkm: public Module {
 public:
     DEFINE_ENUM_WITH_STRING_CONVERSIONS(MappedDataHandling, (Use)(Require)(Discard)(Generate))
@@ -37,6 +53,7 @@ private:
 
     std::string getFieldName(int i, bool output = false) const;
 
+    // general
     bool tryToExecuteFilter(const std::unique_ptr<viskores::filter::Filter> &filter,
                             const viskores::cont::DataSet &inputDataset, viskores::cont::DataSet &outputDataset) const;
 
@@ -53,31 +70,24 @@ private:
 
     bool changeParameter(const vistle::Parameter *param) override;
 
-    ModuleStatusPtr prepareInputGrid(const vistle::Object::const_ptr &grid, viskores::cont::DataSet &dataset) const;
+    ModuleStatusPtr prepareInputGrid(InputData &input) const;
 
-    ModuleStatusPtr prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid,
-                                      const vistle::DataBase::const_ptr &field, std::string &fieldName,
-                                      viskores::cont::DataSet &dataset) const;
+    ModuleStatusPtr prepareInputField(const vistle::Port *port, InputData &input, int index) const;
 
     bool compute(const std::shared_ptr<vistle::BlockTask> &task) const override;
 
     std::unique_ptr<viskores::filter::Filter> setUpFilter() const;
 
-    vistle::Object::const_ptr prepareOutputGrid(const viskores::cont::DataSet &dataset,
-                                                const vistle::Object::const_ptr &inputGrid) const;
+    vistle::Object::const_ptr prepareOutputGrid(const InputData &input, OutputData &output) const;
 
-    vistle::DataBase::ptr prepareOutputField(const viskores::cont::DataSet &dataset,
-                                             const vistle::Object::const_ptr &inputGrid,
-                                             const vistle::DataBase::const_ptr &inputField,
-                                             const viskores::cont::DataSet& inputDataset,
-                                             const std::string &fieldName,
-                                             const vistle::Object::const_ptr &outputGrid) const;
+    vistle::DataBase::ptr prepareOutputField(const InputData &input, OutputData &output, int index) const;
 
     bool prepare() override;
 
     ModuleStatusPtr readInPorts(const std::shared_ptr<vistle::BlockTask> &task, vistle::Object::const_ptr &grid,
                                 std::vector<vistle::DataBase::const_ptr> &fields) const;
 
+    // general
     bool isValid(const ModuleStatusPtr &status) const;
 
     viskores::cont::ArrayHandle<viskores::Particle> createSeedArray() const;
