@@ -6,9 +6,6 @@
 
 #include <vistle/vtkm/vtkm_module.h>
 
-// TODO: find out why we get an error message when using more than 4x1x1 blocks
-//       --> I assume because the Streamline filter can't execute on partitions in
-//           concurrent threads seeing how CanThread() returns false...
 // TODO: narrow conversion from vistle::Float to viskores::FloatDefault (or vistle::Float to Particles)
 // TODO: is it possible to also do backwards or bidirectional integration (like in Tracer)?
 // TODO: I don't like that we have to convert input dataset + field again in prepareOutputField
@@ -27,6 +24,9 @@ private:
     vistle::VectorParameter *m_startPoint1, *m_startPoint2;
 
     bool changeParameter(const vistle::Parameter *param) override;
+
+    ModuleStatusPtr prepareInputGrid(const vistle::Object::const_ptr &grid,
+                                     viskores::cont::DataSet &dataset) const override;
 
     ModuleStatusPtr prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid,
                                       const vistle::DataBase::const_ptr &field, std::string &fieldName,

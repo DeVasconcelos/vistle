@@ -54,6 +54,35 @@ bool StreamlineVtkm::changeParameter(const Parameter *param)
     return Module::changeParameter(param);
 }
 
+ModuleStatusPtr StreamlineVtkm::prepareInputGrid(const vistle::Object::const_ptr &grid,
+                                                 viskores::cont::DataSet &dataset) const
+{
+    /*
+        TODO: 
+        As the module is now, it cannot handle partitioned input grids as the Streamline
+        filter will not know that it has to exchange particles with other partitions.
+        While it seems like the filter does support this, given a viskores::cont::Par-
+        titionedDataSet (see viskores/viskores/filter/flow/internal/ParticleExchanger.h),
+        as far as I understand, for us, each block creates their own unpartitioned dataset.
+        The filter either does so serially or using MPI (if VISKORES_ENABLE_MPI is ON, which,
+        in our case, it never is).
+
+        So, we could either:
+        - implement a custom filter that handles the particle exchange between partitions 
+          (similar to the one Viskores has, but for our setup). This would also require digging
+          into how MPI communication is handled in Viskores, especially when GPUs are involved
+        - when converting a partitioned block to the Viskores data format, use viskores::cont::
+          PartitionedDataSet, although this would affect a lot of code, and in the end, still
+          be serial, as VISKORES_ENABLE_MPI is OFF
+        - have the master rank create a viskores::cont::PartitionedDataSet here (although again
+          this would be serial, as VISKORES_ENABLE_MPI is OFF)
+    */
+    if (grid->getNumBlocks() != 1)
+        return Error("StreamlineVtkm: Partitioned input grids are not supported yet!");
+
+    return VtkmModule::prepareInputGrid(grid, dataset);
+}
+
 ModuleStatusPtr StreamlineVtkm::prepareInputField(const Port *port, const Object::const_ptr &grid,
                                                   const DataBase::const_ptr &field, std::string &fieldName,
                                                   viskores::cont::DataSet &dataset) const
