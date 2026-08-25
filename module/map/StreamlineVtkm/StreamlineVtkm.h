@@ -69,6 +69,7 @@ private:
     vistle::DataBase::ptr prepareOutputField(const viskores::cont::DataSet &dataset,
                                              const vistle::Object::const_ptr &inputGrid,
                                              const vistle::DataBase::const_ptr &inputField,
+                                             const viskores::cont::DataSet& inputDataset,
                                              const std::string &fieldName,
                                              const vistle::Object::const_ptr &outputGrid) const;
 

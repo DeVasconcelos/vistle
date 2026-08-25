@@ -15,7 +15,6 @@
 #include <vistle/vtkm/convert.h>
 
 #include "worklet/GenerateSeeds.h"
-
 #include "StreamlineVtkm.h"
 
 using namespace vistle;
@@ -189,7 +188,6 @@ ModuleStatusPtr StreamlineVtkm::prepareInputGrid(const vistle::Object::const_ptr
     if (grid->getNumBlocks() != 1)
         return Error("StreamlineVtkm: Partitioned input grids are not supported yet!");
 
-    //return VtkmModule::prepareInputGrid(grid, dataset);
     return vtkmSetGrid(dataset, grid);
 }
 
@@ -199,14 +197,12 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const Port *port, const Object
 {
     if (port->getName() == "data_in") {
         if (auto in = Vec<Scalar, 3>::as(field)) {
-            //return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
             return vtkmAddField(dataset, field, fieldName);
         }
 
         return Error("Error: Input field must be a 3D vector field!");
     }
 
-    //return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
     return vtkmAddField(dataset, field, fieldName);
 }
 
@@ -339,7 +335,7 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
         }
 
         if (m_mappedDataHandling != MappedDataHandling::Use || inputFields[i]) {
-            outputField = prepareOutputField(outputDataset, inputGrid, inputFields[i], name, outputGrid);
+            outputField = prepareOutputField(outputDataset, inputGrid, inputFields[i], inputDataset, name, outputGrid);
         }
 
         // ... and write the result to the output ports
@@ -400,40 +396,18 @@ Object::const_ptr StreamlineVtkm::prepareOutputGrid(const viskores::cont::DataSe
     return outputGrid;
 }
 
-DataBase::ptr StreamlineVtkm::prepareOutputField(const viskores::cont::DataSet &dataset,
-                                                 const Object::const_ptr &inputGrid,
-                                                 const DataBase::const_ptr &inputField, const std::string &fieldName,
-                                                 const Object::const_ptr &outputGrid) const
+DataBase::ptr
+StreamlineVtkm::prepareOutputField(const viskores::cont::DataSet &dataset, const Object::const_ptr &inputGrid,
+                                   const DataBase::const_ptr &inputField, const viskores::cont::DataSet &inputDataset,
+                                   const std::string &fieldName, const Object::const_ptr &outputGrid) const
 {
-    // The Streamline filter only returns a geometry of polylines. To match the Tracer behavior, we
-    // need to resample the input field onto the output geometry. To keep this on the device, we use
-    // the Probe filter for this.
-
-    // TODO: Due to the rigid structure of VtkmModule, we need to re-convert the input grid and field
-    // to a Viskores dataset again here (this already happens in the prepareInput-methods).
-    // We could:
-    // - store the input dataset as member variable, since we don't allow the filter to be run of multiple
-    //   partitions/ranks for now. But since we want to support them in the future, that would only be
-    //   a temporary solution.
-    // - not inherit from VtkmModule and implement our own compute-method
-    // - add an option to the VtkmModule which resamples the input fields onto the output geometry, if desired,
-    //   but I want to avoid changes to that since it affects a lot of the other VtkmModules
-    viskores::cont::DataSet inputDataset;
-    auto status = vtkmSetGrid(inputDataset, inputGrid);
-    if (!isValid(status))
-        return nullptr;
-
-    status = vtkmAddField(inputDataset, inputField, fieldName);
-    if (!isValid(status))
-        return nullptr;
-
     auto probe = std::make_unique<viskores::filter::resampling::Probe>();
     probe->SetGeometry(dataset);
     probe->SetOutputFieldName(fieldName);
     auto probeOutput = probe->Execute(inputDataset);
 
     // --------------------------------------------------------------------------------
-    //return VtkmModule::prepareOutputField(probeOutput, inputGrid, inputField, fieldName, outputGrid);
+
     if (auto mapped = vtkmGetField(probeOutput, fieldName)) {
         std::cerr << "mapped data: " << *mapped << std::endl;
         updateMeta(mapped);
