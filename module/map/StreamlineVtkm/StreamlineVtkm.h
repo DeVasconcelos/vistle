@@ -1,21 +1,47 @@
 #ifndef VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H
 #define VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H
 
-#include <viskores/cont/ArrayHandle.h>
+#include <vector>
+#include <viskores/cont/DataSet.h>
+#include <viskores/filter/Filter.h>
 #include <viskores/Particle.h>
 
-#include <vistle/vtkm/vtkm_module.h>
+#include <vistle/alg/objalg.h>
+#include <vistle/module/module.h>
+#include <vistle/util/enum.h>
+#include <vistle/vtkm/module_status.h>
+
+#include <viskores/cont/ArrayHandle.h>
+
 
 // TODO: narrow conversion from vistle::Float to viskores::FloatDefault (or vistle::Float to Particles)
 // TODO: is it possible to also do backwards integration (like in Tracer)?
 //       --> from what I can tell, the filter only supports forward integration as neither the filter itself
 //           nor the integrator worklets nor the Particle data structure itself have an option for backwards
 //           integration. So we would have to implement that ourselves.
-class StreamlineVtkm: public vistle::VtkmModule {
+namespace vistle {
+
+class StreamlineVtkm: public Module {
 public:
+    DEFINE_ENUM_WITH_STRING_CONVERSIONS(MappedDataHandling, (Use)(Require)(Discard)(Generate))
+
     StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm);
 
 private:
+    const int m_numPorts;
+    const MappedDataHandling m_mappedDataHandling;
+
+    std::vector<vistle::Port *> m_inputPorts, m_outputPorts;
+
+    vistle::IntParameter *m_printObjectInfo = nullptr;
+
+    std::string getFieldName(int i, bool output = false) const;
+
+    bool tryToExecuteFilter(const std::unique_ptr<viskores::filter::Filter> &filter,
+                            const viskores::cont::DataSet &inputDataset, viskores::cont::DataSet &outputDataset) const;
+
+    // ---------------------------------------------------------------------------------
+
     vistle::IntParameter *m_integrationMethod;
     vistle::IntParameter *m_numberOfSeeds, *m_maxNumberOfSeeds, *m_numberOfSteps;
     vistle::IntParameter *m_startStyle;
@@ -27,22 +53,34 @@ private:
 
     bool changeParameter(const vistle::Parameter *param) override;
 
-    ModuleStatusPtr prepareInputGrid(const vistle::Object::const_ptr &grid,
-                                     viskores::cont::DataSet &dataset) const override;
+    ModuleStatusPtr prepareInputGrid(const vistle::Object::const_ptr &grid, viskores::cont::DataSet &dataset) const;
 
     ModuleStatusPtr prepareInputField(const vistle::Port *port, const vistle::Object::const_ptr &grid,
                                       const vistle::DataBase::const_ptr &field, std::string &fieldName,
-                                      viskores::cont::DataSet &dataset) const override;
+                                      viskores::cont::DataSet &dataset) const;
 
-    std::unique_ptr<viskores::filter::Filter> setUpFilter() const override;
+    bool compute(const std::shared_ptr<vistle::BlockTask> &task) const override;
+
+    std::unique_ptr<viskores::filter::Filter> setUpFilter() const;
+
+    vistle::Object::const_ptr prepareOutputGrid(const viskores::cont::DataSet &dataset,
+                                                const vistle::Object::const_ptr &inputGrid) const;
 
     vistle::DataBase::ptr prepareOutputField(const viskores::cont::DataSet &dataset,
                                              const vistle::Object::const_ptr &inputGrid,
                                              const vistle::DataBase::const_ptr &inputField,
                                              const std::string &fieldName,
-                                             const vistle::Object::const_ptr &outputGrid) const override;
+                                             const vistle::Object::const_ptr &outputGrid) const;
+
+    bool prepare() override;
+
+    ModuleStatusPtr readInPorts(const std::shared_ptr<vistle::BlockTask> &task, vistle::Object::const_ptr &grid,
+                                std::vector<vistle::DataBase::const_ptr> &fields) const;
+
+    bool isValid(const ModuleStatusPtr &status) const;
 
     viskores::cont::ArrayHandle<viskores::Particle> createSeedArray() const;
 };
+} // namespace vistle
 
 #endif // VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H
