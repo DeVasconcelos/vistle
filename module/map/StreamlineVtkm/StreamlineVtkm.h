@@ -7,8 +7,10 @@
 #include <vistle/vtkm/vtkm_module.h>
 
 // TODO: narrow conversion from vistle::Float to viskores::FloatDefault (or vistle::Float to Particles)
-// TODO: is it possible to also do backwards or bidirectional integration (like in Tracer)?
-// TODO: I don't like that we have to convert input dataset + field again in prepareOutputField
+// TODO: is it possible to also do backwards integration (like in Tracer)?
+//       --> from what I can tell, the filter only supports forward integration as neither the filter itself
+//           nor the integrator worklets nor the Particle data structure itself have an option for backwards
+//           integration. So we would have to implement that ourselves.
 class StreamlineVtkm: public vistle::VtkmModule {
 public:
     StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm);

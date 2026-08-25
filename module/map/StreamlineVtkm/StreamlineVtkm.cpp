@@ -139,8 +139,16 @@ DataBase::ptr StreamlineVtkm::prepareOutputField(const viskores::cont::DataSet &
     // The Streamline filter only returns a geometry of polylines. To match the Tracer behavior, we
     // need to resample the input field onto the output geometry. To keep this on the device, we use
     // the Probe filter for this.
-    // FIXME: Due to the rigid structure of VtkmModule, we need to re-convert the input grid and field
+
+    // TODO: Due to the rigid structure of VtkmModule, we need to re-convert the input grid and field
     // to a Viskores dataset again here (this already happens in the prepareInput-methods).
+    // We could:
+    // - store the input dataset as member variable, since we don't allow the filter to be run of multiple
+    //   partitions/ranks for now. But since we want to support them in the future, that would only be
+    //   a temporary solution.
+    // - not inherit from VtkmModule and implement our own compute-method
+    // - add an option to the VtkmModule which resamples the input fields onto the output geometry, if desired,
+    //   but I want to avoid changes to that since it affects a lot of the other VtkmModules
     viskores::cont::DataSet inputDataset;
     auto status = vtkmSetGrid(inputDataset, inputGrid);
     if (!isValid(status))
