@@ -23,18 +23,16 @@ namespace vistle {
 
 struct InputData {
     vistle::Object::const_ptr vistleGrid;
-    viskores::cont::DataSet viskoresDataset;
-
     std::vector<vistle::DataBase::const_ptr> fields;
-    std::vector<std::string> fieldNames;
+
+    viskores::cont::DataSet viskoresDataset;
 };
 
 struct OutputData {
     vistle::Object::const_ptr vistleGrid;
-    viskores::cont::DataSet viskoresDataset;
-
     std::vector<vistle::DataBase::ptr> fields;
-    std::vector<std::string> fieldNames;
+
+    viskores::cont::DataSet viskoresDataset;
 };
 
 class StreamlineVtkm: public Module {

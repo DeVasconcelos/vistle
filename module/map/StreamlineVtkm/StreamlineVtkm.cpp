@@ -223,8 +223,6 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
         return true;
 
     for (std::size_t i = 0; i < input.fields.size(); ++i) {
-        input.fieldNames.push_back(getFieldName(i));
-
         if (i > 0 && !m_outputPorts[i]->isConnected())
             continue;
 
@@ -244,13 +242,10 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
         }
     }
 
-    // TODO: do we really need both?
-    output.fieldNames = input.fieldNames;
-
     // ... run filter on the active field ...
     bool useInputData =
         m_mappedDataHandling != MappedDataHandling::Discard && m_mappedDataHandling != MappedDataHandling::Generate;
-    auto activeField = useInputData ? input.fieldNames[0] : "";
+    auto activeField = useInputData ? getFieldName(0) : "";
 
     if (printInfo) {
         std::stringstream str;
@@ -259,21 +254,20 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
         str << "</pre>" << std::endl;
         auto msg = str.str();
         std::cout << msg << std::endl;
-        //sendInfo("%s", msg.c_str());
     }
 
     if (m_mappedDataHandling != MappedDataHandling::Require || input.viskoresDataset.HasField(activeField)) {
         if (auto filter = setUpFilter()) {
-            if (input.viskoresDataset.HasField(activeField)) {
+            if (input.viskoresDataset.HasField(activeField))
                 filter->SetActiveField(activeField);
-                /*
+
+            /*
                 By default, Viskores names output fields the same as input fields which causes problems
                 if the input mapping is different from the output mapping, i.e., when converting
                 a point field to a cell field or vice versa. To avoid having a point and a
                 cell field of the same name in the resulting dataset, which leads to conflicts, e.g.,
                 when calling Viskores's GetField() method, we rename the output field here.
             */
-            }
             filter->SetOutputFieldName(getFieldName(0, true));
             filter->SetFieldsToPass("", viskores::cont::Field::Association::Any,
                                     viskores::filter::FieldSelection::Mode::All);
@@ -283,7 +277,6 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
                 str << "Filter: " << typeid(decltype(*filter)).name() << std::endl;
                 auto msg = str.str();
                 std::cout << msg << std::endl;
-                //sendInfo("%s", msg.c_str());
             }
 
             if (!tryToExecuteFilter(filter, input.viskoresDataset, output.viskoresDataset))
@@ -296,7 +289,6 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
                 str << "</pre>" << std::endl;
                 auto msg = str.str();
                 std::cout << msg << std::endl;
-                //sendInfo("%s", msg.c_str());
             }
         } else {
             output.viskoresDataset = input.viskoresDataset;
@@ -308,7 +300,6 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
                 str << "</pre>" << std::endl;
                 auto msg = str.str();
                 std::cout << msg << std::endl;
-                //sendInfo("%s", msg.c_str());
             }
         }
     }
