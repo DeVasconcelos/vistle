@@ -12,9 +12,8 @@
 #include <viskores/cont/ErrorFilterExecution.h>
 #include <viskores/cont/ErrorInternal.h>
 
-
 #include "convert.h"
-
+#include "vtkm_module_utils.h"
 
 using namespace vistle;
 
@@ -314,10 +313,7 @@ bool VtkmModule::compute(const std::shared_ptr<BlockTask> &task) const
 
 bool VtkmModule::isValid(const ModuleStatusPtr &status) const
 {
-    if (strcmp(status->message(), ""))
-        sendText(status->messageType(), status->message());
-
-    return status->continueExecution();
+    return vistle::utils::isValid(*this, status);
 }
 
 bool VtkmModule::tryToExecuteFilter(const std::unique_ptr<viskores::filter::Filter> &filter,

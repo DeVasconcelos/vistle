@@ -4,6 +4,7 @@
 #include <vistle/core/structuredgridbase.h>
 #include <vistle/util/stopwatch.h>
 #include <vistle/vtkm/convert.h>
+#include <vistle/vtkm/vtkm_module_utils.h>
 
 #include <viskores/cont/DataSetBuilderExplicit.h>
 #include <viskores/filter/contour/Contour.h>
@@ -229,19 +230,15 @@ std::vector<Object::ptr> IsoSurfaceVtkm::work(vistle::Object::const_ptr grid,
     // transform vistle dataset to vtkm dataset
     viskores::cont::DataSet vtkmDataSet;
     auto status = vtkmSetGrid(vtkmDataSet, grid);
-    if (!status->continueExecution()) {
-        sendText(status->messageType(), status->message());
+    if (!isValid(status))
         return result;
-    }
 
     std::string isospecies = isoField->getAttribute(attribute::Species);
     if (isospecies.empty())
         isospecies = "isodata";
     status = vtkmAddField(vtkmDataSet, isoField, isospecies);
-    if (!status->continueExecution()) {
-        sendText(status->messageType(), status->message());
+    if (!isValid(status))
         return result;
-    }
 
     std::vector<std::string> mapspecies;
     int unnamed = 0;
@@ -257,10 +254,8 @@ std::vector<Object::ptr> IsoSurfaceVtkm::work(vistle::Object::const_ptr grid,
                 ++unnamed;
             }
             status = vtkmAddField(vtkmDataSet, m, sp);
-            if (!status->continueExecution()) {
-                sendText(status->messageType(), status->message());
+            if (!isValid(status))
                 return result;
-            }
         }
         mapspecies.push_back(sp);
     }
@@ -367,4 +362,9 @@ bool IsoSurfaceVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
     }
 
     return true;
+}
+
+bool IsoSurfaceVtkm::isValid(const ModuleStatusPtr &status) const
+{
+    return vistle::utils::isValid(*this, status);
 }

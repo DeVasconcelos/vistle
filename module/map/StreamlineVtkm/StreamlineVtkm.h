@@ -35,13 +35,6 @@ struct OutputData {
     viskores::cont::DataSet viskoresDataset;
 };
 
-// general
-bool isValid(const vistle::Module &module, const ModuleStatusPtr &status);
-
-// general
-bool tryToExecuteFilter(const vistle::Module &module, const std::unique_ptr<viskores::filter::Filter> &filter,
-                        const viskores::cont::DataSet &inputDataset, viskores::cont::DataSet &outputDataset);
-
 class StreamlineVtkm: public Module {
 public:
     DEFINE_ENUM_WITH_STRING_CONVERSIONS(MappedDataHandling, (Use)(Require)(Discard)(Generate))

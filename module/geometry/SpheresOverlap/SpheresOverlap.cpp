@@ -7,6 +7,7 @@
 #include <vistle/core/points.h>
 #include <vistle/core/uniformgrid.h>
 #include <vistle/vtkm/convert.h>
+#include <vistle/vtkm/vtkm_module_utils.h>
 
 #include "algo/CellListsAlgorithm.h"
 #include "algo/ThicknessDeterminer.h"
@@ -64,10 +65,8 @@ bool SpheresOverlap::compute(const std::shared_ptr<BlockTask> &task) const
         viskores::cont::DataSet vtkmSpheres;
         auto status = vtkmSetGrid(vtkmSpheres, spheres);
 
-        if (!status->continueExecution()) {
-            sendText(status->messageType(), status->message());
+        if (!isValid(status))
             return true;
-        }
 
 
         vtkmSpheres.AddPointField("radius", radii.handle());
@@ -118,4 +117,9 @@ bool SpheresOverlap::compute(const std::shared_ptr<BlockTask> &task) const
     }
 
     return true;
+}
+
+bool SpheresOverlap::isValid(const ModuleStatusPtr &status) const
+{
+    return vistle::utils::isValid(*this, status);
 }

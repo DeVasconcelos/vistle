@@ -49,6 +49,8 @@ private:
                                           const std::vector<vistle::DataBase::const_ptr> &mapdata,
                                           vistle::Scalar isoValue) const;
 
+    bool isValid(const ModuleStatusPtr &status) const;
+
     mutable vistle::Scalar m_min, m_max;
     vistle::Float m_paraMin, m_paraMax;
     bool m_performedPointSearch = false;
