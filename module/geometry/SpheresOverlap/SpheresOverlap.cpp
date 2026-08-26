@@ -74,7 +74,9 @@ bool SpheresOverlap::compute(const std::shared_ptr<BlockTask> &task) const
         VtkmSpheresOverlap overlapFilter;
         overlapFilter.SetRadiusFactor(m_radiusCoefficient->getValue());
         overlapFilter.SetThicknessDeterminer((ThicknessDeterminer)m_thicknessDeterminer->getValue());
-        auto vtkmLines = overlapFilter.Execute(vtkmSpheres);
+        viskores::cont::DataSet vtkmLines;
+        if (!vistle::utils::tryToExecuteFilter(*this, overlapFilter, vtkmSpheres, vtkmLines))
+            return true;
 
         lines = Lines::as(vtkmGetGeometry(vtkmLines));
         lineThicknesses = Vec<Scalar, 1>::as(vtkmGetField(vtkmLines, "lineThickness"));

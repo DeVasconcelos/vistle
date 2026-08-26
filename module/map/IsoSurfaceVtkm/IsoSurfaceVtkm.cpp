@@ -266,8 +266,9 @@ std::vector<Object::ptr> IsoSurfaceVtkm::work(vistle::Object::const_ptr grid,
     isosurfaceFilter.SetIsoValue(isoValue);
     isosurfaceFilter.SetMergeDuplicatePoints(false);
     isosurfaceFilter.SetGenerateNormals(m_computeNormals->getValue() != 0);
-    auto isosurface = isosurfaceFilter.Execute(vtkmDataSet);
-
+    viskores::cont::DataSet isosurface;
+    if (!vistle::utils::tryToExecuteFilter(*this, isosurfaceFilter, vtkmDataSet, isosurface))
+        return result;
 
     // transform result back into vistle format
     Object::ptr geoOut = vtkmGetGeometry(isosurface);

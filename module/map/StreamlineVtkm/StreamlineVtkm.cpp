@@ -271,7 +271,7 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
                 std::cout << msg << std::endl;
             }
 
-            if (!vistle::utils::tryToExecuteFilter(*this, filter, input.viskoresDataset, output.viskoresDataset))
+            if (!this->tryToExecuteFilter(*filter, input.viskoresDataset, output.viskoresDataset))
                 return true;
 
             if (printInfo) {
@@ -378,10 +378,13 @@ ModuleStatusPtr StreamlineVtkm::prepareOutputField(const InputData &input, Outpu
         outputFieldName = getFieldName(index, true);
     }
 
-    auto probe = std::make_unique<viskores::filter::resampling::Probe>();
-    probe->SetGeometry(output.viskoresDataset);
-    probe->SetOutputFieldName(outputFieldName);
-    auto probeOutput = probe->Execute(input.viskoresDataset);
+    auto probe = viskores::filter::resampling::Probe();
+    probe.SetGeometry(output.viskoresDataset);
+    probe.SetOutputFieldName(outputFieldName);
+    if (!this->tryToExecuteFilter(probe, input.viskoresDataset, output.viskoresDataset))
+        return Error("An error occurred while probing the filter output field " + outputFieldName +
+                     " to the output grid.");
+    auto probeOutput = probe.Execute(input.viskoresDataset);
 
     // --------------------------------------------------------------------------------
 
@@ -398,6 +401,12 @@ ModuleStatusPtr StreamlineVtkm::prepareOutputField(const InputData &input, Outpu
     }
 
     return Success();
+}
+
+bool StreamlineVtkm::tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::DataSet &inputDataset,
+                                        viskores::cont::DataSet &outputDataset) const
+{
+    return vistle::utils::tryToExecuteFilter(*this, filter, inputDataset, outputDataset);
 }
 
 bool StreamlineVtkm::isValid(const ModuleStatusPtr &status) const

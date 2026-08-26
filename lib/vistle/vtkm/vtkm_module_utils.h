@@ -1,8 +1,6 @@
 #ifndef VISTLE_VTKM_VTKM_MODULE_UTILS_H
 #define VISTLE_VTKM_VTKM_MODULE_UTILS_H
 
-#include <memory> // for unique_ptr
-
 #include <viskores/filter/Filter.h>
 
 #include <vistle/module/module.h>
@@ -26,13 +24,25 @@ bool V_VTKM_EXPORT isValid(const vistle::Module &module, const ModuleStatusPtr &
     @brief Attempts to execute a Viskores filter and handles any exceptions that may occur.
 
     This function attempts to execute the provided Viskores filter on the input dataset. If
+    an exception occurs during execution, it captures the exception details.
+
+    @return `Success` if the filter was executed successfully, `Error` with the captured details 
+    otherwise.
+*/
+ModuleStatusPtr V_VTKM_EXPORT tryToExecuteFilter(viskores::filter::Filter &filter,
+                                                 const viskores::cont::DataSet &inputDataset,
+                                                 viskores::cont::DataSet &outputDataset);
+
+/*
+    @brief Attempts to execute a Viskores filter and handles any exceptions that may occur.
+
+    This function attempts to execute the provided Viskores filter on the input dataset. If
     an exception occurs during execution, it captures the exception details and sends an 
     appropriate message to the GUI using the Module's send-methods.
 
     @return True if the filter was executed successfully, false otherwise.
 */
-bool V_VTKM_EXPORT tryToExecuteFilter(const vistle::Module &module,
-                                      const std::unique_ptr<viskores::filter::Filter> &filter,
+bool V_VTKM_EXPORT tryToExecuteFilter(const vistle::Module &module, viskores::filter::Filter &filter,
                                       const viskores::cont::DataSet &inputDataset,
                                       viskores::cont::DataSet &outputDataset);
 } // namespace utils

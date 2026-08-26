@@ -112,11 +112,15 @@ protected:
     */
     bool isValid(const ModuleStatusPtr &status) const;
 
+    /*
+        Attempts to execute the given Viskores filter on the input dataset and handles any exceptions that may occur. 
+        If an exception is thrown, a message will be printed to the GUI and the method will return false.
+    */
+    bool tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::DataSet &inputDataset,
+                            viskores::cont::DataSet &outputDataset) const;
+
 private:
     vistle::IntParameter *m_printObjectInfo = nullptr;
-
-    bool tryToExecuteFilter(const std::unique_ptr<viskores::filter::Filter> &filter,
-                            const viskores::cont::DataSet &inputDataset, viskores::cont::DataSet &outputDataset) const;
 };
 } // namespace vistle
 #endif

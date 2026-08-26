@@ -25,15 +25,15 @@ bool isValid(const vistle::Module &module, const ModuleStatusPtr &status)
     return status->continueExecution();
 }
 
-bool tryToExecuteFilter(const vistle::Module &module, const std::unique_ptr<viskores::filter::Filter> &filter,
-                        const viskores::cont::DataSet &inputDataset, viskores::cont::DataSet &outputDataset)
+ModuleStatusPtr tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::DataSet &inputDataset,
+                                   viskores::cont::DataSet &outputDataset)
 {
     std::string kind, description, message, backtrace;
 
     try {
         try {
-            outputDataset = filter->Execute(inputDataset);
-            return true;
+            outputDataset = filter.Execute(inputDataset);
+            return Success();
         } catch (const viskores::cont::ErrorBadAllocation &error) {
             kind = "memory allocation error";
             description = "A memory allocation error occurred while executing the filter";
@@ -83,15 +83,26 @@ bool tryToExecuteFilter(const vistle::Module &module, const std::unique_ptr<visk
         msg << " (" << description << ")";
     if (!message.empty())
         msg << ": " << message;
-    module.sendError(msg.str());
 
+    std::stringstream logMsg;
     if (!backtrace.empty()) {
-        msg << "\nBacktrace:\n" << backtrace;
+        logMsg << msg.str() << "\nBacktrace:\n" << backtrace;
     }
 
-    std::cerr << msg.str() << std::endl;
+    std::cerr << logMsg.str() << std::endl;
 
-    return false;
+    return Error(msg.str());
+}
+
+bool tryToExecuteFilter(const vistle::Module &module, viskores::filter::Filter &filter,
+                        const viskores::cont::DataSet &inputDataset, viskores::cont::DataSet &outputDataset)
+{
+    auto status = tryToExecuteFilter(filter, inputDataset, outputDataset);
+    if (!isValid(module, status)) {
+        return false;
+    }
+
+    return true;
 }
 
 } // namespace utils
