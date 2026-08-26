@@ -35,6 +35,13 @@ struct OutputData {
     viskores::cont::DataSet viskoresDataset;
 };
 
+// general
+bool isValid(const vistle::Module &module, const ModuleStatusPtr &status);
+
+// general
+bool tryToExecuteFilter(const vistle::Module &module, const std::unique_ptr<viskores::filter::Filter> &filter,
+                        const viskores::cont::DataSet &inputDataset, viskores::cont::DataSet &outputDataset);
+
 class StreamlineVtkm: public Module {
 public:
     DEFINE_ENUM_WITH_STRING_CONVERSIONS(MappedDataHandling, (Use)(Require)(Discard)(Generate))
@@ -53,15 +60,10 @@ private:
 
     bool prepare() override;
 
+    bool isValid(const ModuleStatusPtr &status) const;
+
     ModuleStatusPtr readInPorts(const std::shared_ptr<vistle::BlockTask> &task, vistle::Object::const_ptr &grid,
                                 std::vector<vistle::DataBase::const_ptr> &fields) const;
-
-    // general
-    bool tryToExecuteFilter(const std::unique_ptr<viskores::filter::Filter> &filter,
-                            const viskores::cont::DataSet &inputDataset, viskores::cont::DataSet &outputDataset) const;
-
-    // general
-    bool isValid(const ModuleStatusPtr &status) const;
 
     // ---------------------------------------------------------------------------------
 
@@ -90,6 +92,7 @@ private:
 
     viskores::cont::ArrayHandle<viskores::Particle> createSeedArray() const;
 };
+
 } // namespace vistle
 
 #endif // VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H

@@ -279,7 +279,7 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
                 std::cout << msg << std::endl;
             }
 
-            if (!tryToExecuteFilter(filter, input.viskoresDataset, output.viskoresDataset))
+            if (!tryToExecuteFilter(*this, filter, input.viskoresDataset, output.viskoresDataset))
                 return true;
 
             if (printInfo) {
@@ -410,15 +410,21 @@ ModuleStatusPtr StreamlineVtkm::prepareOutputField(const InputData &input, Outpu
 
 bool StreamlineVtkm::isValid(const ModuleStatusPtr &status) const
 {
+    return vistle::isValid(*this, status);
+}
+
+namespace vistle {
+
+bool isValid(const Module &module, const ModuleStatusPtr &status)
+{
     if (strcmp(status->message(), ""))
-        sendText(status->messageType(), status->message());
+        module.sendText(status->messageType(), status->message());
 
     return status->continueExecution();
 }
 
-bool StreamlineVtkm::tryToExecuteFilter(const std::unique_ptr<viskores::filter::Filter> &filter,
-                                        const viskores::cont::DataSet &inputDataset,
-                                        viskores::cont::DataSet &outputDataset) const
+bool tryToExecuteFilter(const Module &module, const std::unique_ptr<viskores::filter::Filter> &filter,
+                        const viskores::cont::DataSet &inputDataset, viskores::cont::DataSet &outputDataset)
 {
     std::string kind, description, message, backtrace;
 
@@ -475,7 +481,7 @@ bool StreamlineVtkm::tryToExecuteFilter(const std::unique_ptr<viskores::filter::
         msg << " (" << description << ")";
     if (!message.empty())
         msg << ": " << message;
-    sendError(msg.str());
+    module.sendError(msg.str());
 
     if (!backtrace.empty()) {
         msg << "\nBacktrace:\n" << backtrace;
@@ -485,3 +491,4 @@ bool StreamlineVtkm::tryToExecuteFilter(const std::unique_ptr<viskores::filter::
 
     return false;
 }
+} // namespace vistle
