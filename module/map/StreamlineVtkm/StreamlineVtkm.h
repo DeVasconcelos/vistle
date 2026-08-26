@@ -29,7 +29,7 @@ struct InputData {
 };
 
 struct OutputData {
-    vistle::Object::const_ptr vistleGrid;
+    vistle::Object::ptr vistleGrid;
     std::vector<vistle::DataBase::ptr> fields;
 
     viskores::cont::DataSet viskoresDataset;
@@ -51,9 +51,17 @@ private:
 
     std::string getFieldName(int i, bool output = false) const;
 
+    bool prepare() override;
+
+    ModuleStatusPtr readInPorts(const std::shared_ptr<vistle::BlockTask> &task, vistle::Object::const_ptr &grid,
+                                std::vector<vistle::DataBase::const_ptr> &fields) const;
+
     // general
     bool tryToExecuteFilter(const std::unique_ptr<viskores::filter::Filter> &filter,
                             const viskores::cont::DataSet &inputDataset, viskores::cont::DataSet &outputDataset) const;
+
+    // general
+    bool isValid(const ModuleStatusPtr &status) const;
 
     // ---------------------------------------------------------------------------------
 
@@ -76,17 +84,9 @@ private:
 
     std::unique_ptr<viskores::filter::Filter> setUpFilter() const;
 
-    vistle::Object::const_ptr prepareOutputGrid(const InputData &input, OutputData &output) const;
+    ModuleStatusPtr prepareOutputGrid(const InputData &input, OutputData &output) const;
 
-    vistle::DataBase::ptr prepareOutputField(const InputData &input, OutputData &output, int index) const;
-
-    bool prepare() override;
-
-    ModuleStatusPtr readInPorts(const std::shared_ptr<vistle::BlockTask> &task, vistle::Object::const_ptr &grid,
-                                std::vector<vistle::DataBase::const_ptr> &fields) const;
-
-    // general
-    bool isValid(const ModuleStatusPtr &status) const;
+    ModuleStatusPtr prepareOutputField(const InputData &input, OutputData &output, int index) const;
 
     viskores::cont::ArrayHandle<viskores::Particle> createSeedArray() const;
 };

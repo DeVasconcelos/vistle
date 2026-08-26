@@ -305,17 +305,19 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
     }
 
     // ... transform filter output, i.e., grid and data fields, to Vistle objects ...
-    output.vistleGrid = prepareOutputGrid(input, output);
-    if (!output.vistleGrid) {
+    status = prepareOutputGrid(input, output);
+    if (!isValid(status))
         return true;
-    }
 
+    output.fields.resize(input.fields.size(), nullptr);
     for (std::size_t i = 0; i < input.fields.size(); ++i) {
         if (!m_outputPorts[i]->isConnected())
             continue;
 
         if (m_mappedDataHandling != MappedDataHandling::Use || input.fields[i]) {
-            output.fields.push_back(prepareOutputField(input, output, i));
+            status = prepareOutputField(input, output, i);
+            if (!isValid(status))
+                return true;
         }
 
         // ... and write the result to the output ports
@@ -363,19 +365,20 @@ std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
     return filter;
 }
 
-// TODO: we don't have to return anymore!
-Object::const_ptr StreamlineVtkm::prepareOutputGrid(const InputData &input, OutputData &output) const
+ModuleStatusPtr StreamlineVtkm::prepareOutputGrid(const InputData &input, OutputData &output) const
 {
-    auto outputGrid = vtkmGetGeometry(output.viskoresDataset);
-    if (outputGrid) {
-        updateMeta(outputGrid);
-        outputGrid->copyAttributes(input.vistleGrid);
+    output.vistleGrid = vtkmGetGeometry(output.viskoresDataset);
+    if (output.vistleGrid) {
+        updateMeta(output.vistleGrid);
+        output.vistleGrid->copyAttributes(input.vistleGrid);
+    } else {
+        return Error("An error occurred while transforming the filter output grid to a Vistle object.");
     }
 
-    return outputGrid;
+    return Success();
 }
 
-DataBase::ptr StreamlineVtkm::prepareOutputField(const InputData &input, OutputData &output, int index) const
+ModuleStatusPtr StreamlineVtkm::prepareOutputField(const InputData &input, OutputData &output, int index) const
 {
     std::string outputFieldName = getFieldName(index);
     if (index == 0 && output.viskoresDataset.HasField(getFieldName(index, true))) {
@@ -393,18 +396,16 @@ DataBase::ptr StreamlineVtkm::prepareOutputField(const InputData &input, OutputD
     if (auto mapped = vtkmGetField(probeOutput, outputFieldName)) {
         std::cerr << "mapped data: " << *mapped << std::endl;
         updateMeta(mapped);
-        auto mapping = mapped->mapping();
         mapped->copyAttributes(input.fields[index]);
-        mapped->setMapping(mapping);
         if (output.vistleGrid)
             mapped->setGrid(output.vistleGrid);
-        return mapped;
+        output.fields[index] = mapped;
     } else {
-        sendError("An error occurred while transforming the filter output field %s to a Vistle object.",
-                  outputFieldName.c_str());
+        return Error("An error occurred while transforming the filter output field " + outputFieldName +
+                     " to a Vistle object.");
     }
 
-    return nullptr;
+    return Success();
 }
 
 bool StreamlineVtkm::isValid(const ModuleStatusPtr &status) const
