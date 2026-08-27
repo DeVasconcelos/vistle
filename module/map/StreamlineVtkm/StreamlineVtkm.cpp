@@ -220,11 +220,9 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
 
         if (m_mappedDataHandling == MappedDataHandling::Require) {
             if (!input.fields[i]) {
-                std::stringstream msg;
-                msg << "No mapped data on input port " << m_inputPorts[i]->getName();
-                status = Error(msg.str());
-                if (!isValid(status))
-                    return true;
+                sendError("Cannot continue: No mapped data on input port " + m_inputPorts[i]->getName() +
+                          ", even though it is required by the module!");
+                return true;
             }
         }
         if (input.fields[i]) {
@@ -244,8 +242,7 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
         str << "<pre>Input ";
         input.viskoresDataset.PrintSummary(str);
         str << "</pre>" << std::endl;
-        auto msg = str.str();
-        std::cout << msg << std::endl;
+        std::cout << str.str() << std::endl;
     }
 
     if (m_mappedDataHandling != MappedDataHandling::Require || input.viskoresDataset.HasField(activeField)) {
@@ -267,8 +264,7 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
             if (printInfo) {
                 std::stringstream str;
                 str << "Filter: " << typeid(decltype(*filter)).name() << std::endl;
-                auto msg = str.str();
-                std::cout << msg << std::endl;
+                std::cout << str.str() << std::endl;
             }
 
             if (!this->tryToExecuteFilter(*filter, input.viskoresDataset, output.viskoresDataset))
@@ -279,8 +275,7 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
                 str << "<pre>Output ";
                 output.viskoresDataset.PrintSummary(str);
                 str << "</pre>" << std::endl;
-                auto msg = str.str();
-                std::cout << msg << std::endl;
+                std::cout << str.str() << std::endl;
             }
         } else {
             output.viskoresDataset = input.viskoresDataset;
@@ -290,8 +285,7 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
                 str << "<pre>Output ";
                 output.viskoresDataset.PrintSummary(str);
                 str << "</pre>" << std::endl;
-                auto msg = str.str();
-                std::cout << msg << std::endl;
+                std::cout << str.str() << std::endl;
             }
         }
     }
