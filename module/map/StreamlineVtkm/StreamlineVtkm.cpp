@@ -186,7 +186,7 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const Port *port, HybridInputD
 {
     auto field = input.fields[index];
 
-    if (port->getName() == "data_in") {
+    if (index == 0) {
         if (auto in = Vec<Scalar, 3>::as(field); !in) {
             return Error("Error: Input field at port " + port->getName() + " must be a 3D vector field!");
         }
