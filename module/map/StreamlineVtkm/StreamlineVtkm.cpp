@@ -154,7 +154,7 @@ bool StreamlineVtkm::changeParameter(const Parameter *param)
     return Module::changeParameter(param);
 }
 
-ModuleStatusPtr StreamlineVtkm::prepareInputGrid(InputData &input) const
+ModuleStatusPtr StreamlineVtkm::prepareInputGrid(HybridInputData &input) const
 {
     /*
         TODO: 
@@ -182,7 +182,7 @@ ModuleStatusPtr StreamlineVtkm::prepareInputGrid(InputData &input) const
     return vtkmSetGrid(input.viskoresDataset, input.vistleGrid);
 }
 
-ModuleStatusPtr StreamlineVtkm::prepareInputField(const Port *port, InputData &input, int index) const
+ModuleStatusPtr StreamlineVtkm::prepareInputField(const Port *port, HybridInputData &input, int index) const
 {
     auto field = input.fields[index];
 
@@ -197,8 +197,8 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const Port *port, InputData &i
 
 bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) const
 {
-    InputData input;
-    OutputData output;
+    HybridInputData input;
+    HybridOutputData output;
 
     bool printInfo = m_printObjectInfo->getValue() != 0;
 
@@ -351,7 +351,7 @@ std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
     return filter;
 }
 
-ModuleStatusPtr StreamlineVtkm::prepareOutputGrid(const InputData &input, OutputData &output) const
+ModuleStatusPtr StreamlineVtkm::prepareOutputGrid(const HybridInputData &input, HybridOutputData &output) const
 {
     output.vistleGrid = vtkmGetGeometry(output.viskoresDataset);
     if (output.vistleGrid) {
@@ -364,7 +364,8 @@ ModuleStatusPtr StreamlineVtkm::prepareOutputGrid(const InputData &input, Output
     return Success();
 }
 
-ModuleStatusPtr StreamlineVtkm::prepareOutputField(const InputData &input, OutputData &output, int index) const
+ModuleStatusPtr StreamlineVtkm::prepareOutputField(const HybridInputData &input, HybridOutputData &output,
+                                                   int index) const
 {
     std::string outputFieldName = getFieldName(index);
     if (index == 0 && output.viskoresDataset.HasField(getFieldName(index, true))) {

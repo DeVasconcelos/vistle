@@ -21,14 +21,14 @@
 //           integration. So we would have to implement that ourselves.
 namespace vistle {
 
-struct InputData {
+struct HybridInputData {
     vistle::Object::const_ptr vistleGrid;
     std::vector<vistle::DataBase::const_ptr> fields;
 
     viskores::cont::DataSet viskoresDataset;
 };
 
-struct OutputData {
+struct HybridOutputData {
     vistle::Object::ptr vistleGrid;
     std::vector<vistle::DataBase::ptr> fields;
 
@@ -74,17 +74,17 @@ private:
 
     bool changeParameter(const vistle::Parameter *param) override;
 
-    ModuleStatusPtr prepareInputGrid(InputData &input) const;
+    ModuleStatusPtr prepareInputGrid(HybridInputData &input) const;
 
-    ModuleStatusPtr prepareInputField(const vistle::Port *port, InputData &input, int index) const;
+    ModuleStatusPtr prepareInputField(const vistle::Port *port, HybridInputData &input, int index) const;
 
     bool compute(const std::shared_ptr<vistle::BlockTask> &task) const override;
 
     std::unique_ptr<viskores::filter::Filter> setUpFilter() const;
 
-    ModuleStatusPtr prepareOutputGrid(const InputData &input, OutputData &output) const;
+    ModuleStatusPtr prepareOutputGrid(const HybridInputData &input, HybridOutputData &output) const;
 
-    ModuleStatusPtr prepareOutputField(const InputData &input, OutputData &output, int index) const;
+    ModuleStatusPtr prepareOutputField(const HybridInputData &input, HybridOutputData &output, int index) const;
 
     viskores::cont::ArrayHandle<viskores::Particle> createSeedArray() const;
 };
