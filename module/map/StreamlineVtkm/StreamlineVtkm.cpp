@@ -1,6 +1,8 @@
 #include <viskores/filter/flow/Streamline.h>
 #include <viskores/filter/resampling/Probe.h>
 #include <viskores/VectorAnalysis.h>
+#include <viskores/cont/EnvironmentTracker.h>
+#include <viskores/thirdparty/diy/diy.h>
 
 #include <vistle/util/enum.h>
 #include <vistle/vtkm/convert.h>
@@ -19,6 +21,14 @@ DEFINE_ENUM_WITH_STRING_CONVERSIONS(StartStyle, (Line)(Plane))
 StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm)
 : Module(name, moduleID, comm), m_numPorts(3), m_mappedDataHandling(MappedDataHandling::Require)
 {
+    const MPI_Comm mpiComm = comm;
+    const viskoresdiy::mpi::DIY_MPI_Comm diyComm{mpiComm};
+    viskoresdiy::mpi::communicator viskoresComm(diyComm, false);
+    viskoresdiy::mpi::communicator viskoresDup;
+    viskoresDup.duplicate(viskoresComm);
+
+    viskores::cont::EnvironmentTracker::SetCommunicator(viskoresComm);
+
     assert(m_numPorts > 0);
     bool dataInput =
         m_mappedDataHandling != MappedDataHandling::Discard && m_mappedDataHandling != MappedDataHandling::Generate;
@@ -166,8 +176,8 @@ ModuleStatusPtr StreamlineVtkm::prepareInputGrid(InputData &input) const
         - have the master rank create a viskores::cont::PartitionedDataSet here (although again
           this would be serial, as VISKORES_ENABLE_MPI is OFF)
     */
-    if (input.vistleGrid->getNumBlocks() != 1)
-        return Error("StreamlineVtkm: Partitioned input grids are not supported yet!");
+    /*     if (input.vistleGrid->getNumBlocks() != 1)
+        return Error("StreamlineVtkm: Partitioned input grids are not supported yet!"); */
 
     return vtkmSetGrid(input.viskoresDataset, input.vistleGrid);
 }

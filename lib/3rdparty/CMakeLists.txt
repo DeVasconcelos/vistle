@@ -123,7 +123,7 @@ if(NOT VISTLE_GUI_ONLY)
         #
         #set(Viskores_NO_ASSERT ON)
         set(Viskores_NO_DEPRECATED_VIRTUAL ON)
-        set(Viskores_ENABLE_MPI OFF)
+        set(Viskores_ENABLE_MPI ON)
         #self.define_from_variant("Viskores_ENABLE_OPENMP", "openmp"),
         set(Viskores_ENABLE_DEVELOPER_FLAGS OFF)
         if(TARGET anari::anari)
