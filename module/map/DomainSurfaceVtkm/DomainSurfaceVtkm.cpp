@@ -13,12 +13,11 @@ DomainSurfaceVtkm::DomainSurfaceVtkm(const std::string &name, int moduleID, mpi:
 : VtkmModule(name, moduleID, comm, 1, MappedDataHandling::Use)
 {}
 
-ModuleStatusPtr DomainSurfaceVtkm::prepareInputGrid(const vistle::Object::const_ptr &grid,
-                                                    viskores::cont::DataSet &dataset) const
+ModuleStatusPtr DomainSurfaceVtkm::prepareInputGrid(InputData &input) const
 {
-    if (!StructuredGridBase::as(grid) && !UnstructuredGrid::as(grid))
+    if (!StructuredGridBase::as(input.vistleGrid) && !UnstructuredGrid::as(input.vistleGrid))
         return Error("only structured and unstructured grids supported");
-    return VtkmModule::prepareInputGrid(grid, dataset);
+    return VtkmModule::prepareInputGrid(input);
 }
 
 std::unique_ptr<viskores::filter::Filter> DomainSurfaceVtkm::setUpFilter() const

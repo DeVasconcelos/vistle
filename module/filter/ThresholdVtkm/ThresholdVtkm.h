@@ -14,14 +14,10 @@ private:
 
     std::unique_ptr<viskores::filter::Filter> setUpFilter() const override;
 
-    vistle::Object::const_ptr prepareOutputGrid(const viskores::cont::DataSet &dataset,
-                                                const vistle::Object::const_ptr &inputGrid) const override;
+    vistle::Object::const_ptr prepareOutputGrid(const InputData &input, OutputData &output) const override;
 
-    vistle::DataBase::ptr prepareOutputField(const viskores::cont::DataSet &dataset,
-                                             const vistle::Object::const_ptr &inputGrid,
-                                             const vistle::DataBase::const_ptr &inputField,
-                                             const std::string &fieldName,
-                                             const vistle::Object::const_ptr &outputGrid) const override;
+    vistle::DataBase::ptr prepareOutputField(const InputData &input, OutputData &output, int index,
+                                             const std::string &fieldName) const override;
 };
 
 #endif

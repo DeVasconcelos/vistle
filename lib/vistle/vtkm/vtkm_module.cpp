@@ -3,18 +3,8 @@
 #include <boost/fusion/sequence/io/out.hpp>
 #include <sstream>
 
-#include <viskores/cont/Error.h>
-#include <viskores/cont/ErrorBadAllocation.h>
-#include <viskores/cont/ErrorBadDevice.h>
-#include <viskores/cont/ErrorBadType.h>
-#include <viskores/cont/ErrorBadValue.h>
-#include <viskores/cont/ErrorExecution.h>
-#include <viskores/cont/ErrorFilterExecution.h>
-#include <viskores/cont/ErrorInternal.h>
-
-
 #include "convert.h"
-
+#include "vtkm_module_utils.h"
 
 using namespace vistle;
 
@@ -48,10 +38,10 @@ VtkmModule::VtkmModule(const std::string &name, int moduleID, mpi::communicator 
                         Parameter::Boolean);
 }
 
-std::string VtkmModule::getFieldName(int i, bool output) const
+std::string VtkmModule::getFieldName(int index, bool output) const
 {
-    std::string name = "data_at_port_" + std::to_string(i);
-    if (i == 0 && output)
+    std::string name = "data_at_port_" + std::to_string(index);
+    if (index == 0 && output)
         name += "_out";
     return name;
 }
@@ -66,11 +56,9 @@ bool VtkmModule::prepare()
 
     for (int i = 0; i < m_numPorts; ++i) {
         if (!m_inputPorts[i]->isConnected() && m_outputPorts[i]->isConnected()) {
-            std::stringstream msg;
-            msg << "Output port " << m_outputPorts[i]->getName() << " is connected, but corresponding input port "
-                << m_inputPorts[i]->getName() << " is not";
             if (rank() == 0)
-                sendError(msg.str());
+                sendError("Output port " + m_outputPorts[i]->getName() +
+                          " is connected, but corresponding input port " + m_inputPorts[i]->getName() + " is not");
             return false;
         }
     }
@@ -93,76 +81,69 @@ ModuleStatusPtr VtkmModule::readInPorts(const std::shared_ptr<BlockTask> &task, 
         auto data = split.mapped;
 
         // make sure there is data on the input port if the corresponding output port is connected
-        if (!geometry && !data) {
-            std::stringstream msg;
-            msg << "No data on input port " << m_inputPorts[i]->getName() << ", even though it is connected";
-            return Error(msg.str());
-        }
+        if (!geometry && !data)
+            return Error("No data on input port " + m_inputPorts[i]->getName() + ", even though it is connected");
 
         fields.push_back(data);
 
         // make sure all data fields are defined on the same grid
         if (grid) {
             if (geometry && geometry->getHandle() != grid->getHandle()) {
-                std::stringstream msg;
-                msg << "The grid on " << m_inputPorts[i]->getName()
-                    << " does not match the grid on the other input ports!";
-                return Error(msg.str());
+                return Error("The grid on " + m_inputPorts[i]->getName() +
+                             " does not match the grid on the other input ports!");
             }
         } else {
             grid = geometry;
         }
     }
 
-    if (!grid) {
-        std::ostringstream msg;
-        msg << "Could not find a valid input grid on any input port";
-        return Error(msg.str());
-    }
+    if (!grid)
+        return Error("Could not find a valid input grid on any input port");
 
     return Success();
 }
 
-ModuleStatusPtr VtkmModule::prepareInputGrid(const Object::const_ptr &grid, viskores::cont::DataSet &dataset) const
+ModuleStatusPtr VtkmModule::prepareInputGrid(InputData &input) const
 {
-    return vtkmSetGrid(dataset, grid);
+    return vtkmSetGrid(input.viskoresDataset, input.vistleGrid);
 }
 
-ModuleStatusPtr VtkmModule::prepareInputField(const Port *port, const Object::const_ptr &grid,
-                                              const DataBase::const_ptr &field, std::string &fieldName,
-                                              viskores::cont::DataSet &dataset) const
+ModuleStatusPtr VtkmModule::prepareInputField(const Port *port, InputData &input, int index) const
 {
-    return vtkmAddField(dataset, field, fieldName);
+    return vtkmAddField(input.viskoresDataset, input.fields[index], getFieldName(index));
 }
 
-Object::const_ptr VtkmModule::prepareOutputGrid(const viskores::cont::DataSet &dataset,
-                                                const Object::const_ptr &inputGrid) const
+Object::const_ptr VtkmModule::prepareOutputGrid(const InputData &input, OutputData &output) const
 {
-    auto outputGrid = vtkmGetGeometry(dataset);
+    auto outputGrid = vtkmGetGeometry(output.viskoresDataset);
     if (outputGrid) {
         updateMeta(outputGrid);
-        outputGrid->copyAttributes(inputGrid);
+        outputGrid->copyAttributes(input.vistleGrid);
     }
 
     return outputGrid;
 }
 
-DataBase::ptr VtkmModule::prepareOutputField(const viskores::cont::DataSet &dataset, const Object::const_ptr &inputGrid,
-                                             const DataBase::const_ptr &inputField, const std::string &fieldName,
-                                             const Object::const_ptr &outputGrid) const
+DataBase::ptr VtkmModule::prepareOutputField(const InputData &input, OutputData &output, int index,
+                                             const std::string &fieldName) const
 {
-    if (auto mapped = vtkmGetField(dataset, fieldName)) {
+    if (auto mapped = vtkmGetField(output.viskoresDataset, fieldName)) {
         std::cerr << "mapped data: " << *mapped << std::endl;
         updateMeta(mapped);
+
+        // the mapping of the output field might differ from the one of the input field,
+        // so lets temporarily store it and set it again after copying the attributes
         auto mapping = mapped->mapping();
-        mapped->copyAttributes(inputField);
+        mapped->copyAttributes(input.fields[index]);
         mapped->setMapping(mapping);
-        if (outputGrid)
-            mapped->setGrid(outputGrid);
+
+        if (output.vistleGrid)
+            mapped->setGrid(output.vistleGrid);
+
         return mapped;
+
     } else {
-        sendError("An error occurred while transforming the filter output field %s to a Vistle object.",
-                  fieldName.c_str());
+        sendError("An error occurred while transforming the filter output field " + fieldName + " to a Vistle object.");
     }
 
     return nullptr;
@@ -170,44 +151,37 @@ DataBase::ptr VtkmModule::prepareOutputField(const viskores::cont::DataSet &data
 
 bool VtkmModule::compute(const std::shared_ptr<BlockTask> &task) const
 {
-    Object::const_ptr inputGrid;
-    std::vector<DataBase::const_ptr> inputFields;
-    std::vector<std::string> fieldNames;
-
-    viskores::cont::DataSet inputDataset, outputDataset;
+    InputData input;
+    OutputData output;
 
     bool printInfo = m_printObjectInfo->getValue() != 0;
 
     // read in data from the input ports...
-    auto status = readInPorts(task, inputGrid, inputFields);
-    if (!isValid(status))
+    auto status = readInPorts(task, input.vistleGrid, input.fields);
+    if (!checkAndNotify(status))
         return true;
 
-    assert(m_outputPorts.size() == inputFields.size());
+    assert(m_outputPorts.size() == input.fields.size());
 
     // ... transform the input grid (and fields) into a Viskores dataset ...
-    status = prepareInputGrid(inputGrid, inputDataset);
-    if (!isValid(status))
+    status = prepareInputGrid(input);
+    if (!checkAndNotify(status))
         return true;
 
-    for (std::size_t i = 0; i < inputFields.size(); ++i) {
-        fieldNames.push_back(getFieldName(i));
-
+    for (std::size_t i = 0; i < input.fields.size(); ++i) {
         if (i > 0 && !m_outputPorts[i]->isConnected())
             continue;
 
         if (m_mappedDataHandling == MappedDataHandling::Require) {
-            if (!inputFields[i]) {
-                std::stringstream msg;
-                msg << "No mapped data on input port " << m_inputPorts[i]->getName();
-                status = Error(msg.str());
-                if (!isValid(status))
-                    return true;
+            if (!input.fields[i]) {
+                sendError("Cannot continue: No mapped data on input port " + m_inputPorts[i]->getName() +
+                          ", even though it is required by the module!");
+                return true;
             }
         }
-        if (inputFields[i]) {
-            status = prepareInputField(m_inputPorts[i], inputGrid, inputFields[i], fieldNames[i], inputDataset);
-            if (!isValid(status))
+        if (input.fields[i]) {
+            status = prepareInputField(m_inputPorts[i], input, i);
+            if (!checkAndNotify(status))
                 return true;
         }
     }
@@ -215,30 +189,28 @@ bool VtkmModule::compute(const std::shared_ptr<BlockTask> &task) const
     // ... run filter on the active field ...
     bool useInputData =
         m_mappedDataHandling != MappedDataHandling::Discard && m_mappedDataHandling != MappedDataHandling::Generate;
-    auto activeField = useInputData ? fieldNames[0] : "";
+    auto activeField = useInputData ? getFieldName(0) : "";
 
     if (printInfo) {
         std::stringstream str;
         str << "<pre>Input ";
-        inputDataset.PrintSummary(str);
+        input.viskoresDataset.PrintSummary(str);
         str << "</pre>" << std::endl;
-        auto msg = str.str();
-        std::cout << msg << std::endl;
-        //sendInfo("%s", msg.c_str());
+        std::cout << str.str() << std::endl;
     }
 
-    if (m_mappedDataHandling != MappedDataHandling::Require || inputDataset.HasField(activeField)) {
+    if (m_mappedDataHandling != MappedDataHandling::Require || input.viskoresDataset.HasField(activeField)) {
         if (auto filter = setUpFilter()) {
-            if (inputDataset.HasField(activeField)) {
+            if (input.viskoresDataset.HasField(activeField))
                 filter->SetActiveField(activeField);
-                /*
+
+            /*
                 By default, Viskores names output fields the same as input fields which causes problems
                 if the input mapping is different from the output mapping, i.e., when converting
                 a point field to a cell field or vice versa. To avoid having a point and a
                 cell field of the same name in the resulting dataset, which leads to conflicts, e.g.,
                 when calling Viskores's GetField() method, we rename the output field here.
             */
-            }
             filter->SetOutputFieldName(getFieldName(0, true));
             filter->SetFieldsToPass("", viskores::cont::Field::Association::Any,
                                     viskores::filter::FieldSelection::Mode::All);
@@ -246,146 +218,69 @@ bool VtkmModule::compute(const std::shared_ptr<BlockTask> &task) const
             if (printInfo) {
                 std::stringstream str;
                 str << "Filter: " << typeid(decltype(*filter)).name() << std::endl;
-                auto msg = str.str();
-                std::cout << msg << std::endl;
-                //sendInfo("%s", msg.c_str());
+                std::cout << str.str() << std::endl;
             }
 
-            if (!tryToExecuteFilter(filter, inputDataset, outputDataset))
+            if (!this->tryToExecuteFilter(*filter, input.viskoresDataset, output.viskoresDataset))
                 return true;
 
             if (printInfo) {
                 std::stringstream str;
                 str << "<pre>Output ";
-                outputDataset.PrintSummary(str);
+                output.viskoresDataset.PrintSummary(str);
                 str << "</pre>" << std::endl;
-                auto msg = str.str();
-                std::cout << msg << std::endl;
-                //sendInfo("%s", msg.c_str());
+                std::cout << str.str() << std::endl;
             }
         } else {
-            outputDataset = inputDataset;
+            output.viskoresDataset = input.viskoresDataset;
 
             if (printInfo) {
                 std::stringstream str;
                 str << "<pre>Output ";
-                outputDataset.PrintSummary(str);
+                output.viskoresDataset.PrintSummary(str);
                 str << "</pre>" << std::endl;
-                auto msg = str.str();
-                std::cout << msg << std::endl;
-                //sendInfo("%s", msg.c_str());
+                std::cout << str.str() << std::endl;
             }
         }
     }
 
     // ... transform filter output, i.e., grid and data fields, to Vistle objects ...
-    auto outputGrid = prepareOutputGrid(outputDataset, inputGrid);
-    if (!outputGrid) {
+    output.vistleGrid = prepareOutputGrid(input, output);
+    if (!output.vistleGrid)
         return true;
-    }
 
-    for (std::size_t i = 0; i < inputFields.size(); ++i) {
-        DataBase::ptr outputField;
+    output.fields.resize(input.fields.size(), nullptr);
+    for (std::size_t i = 0; i < input.fields.size(); ++i) {
         if (!m_outputPorts[i]->isConnected())
             continue;
 
-        //if (inputFields[i]) {
-        std::string name = fieldNames[i];
-        if (i == 0 && outputDataset.HasField(getFieldName(i, true))) {
-            // if filter has created a dedicated output field, use it
-            name = getFieldName(i, true);
-        }
-
-        if (m_mappedDataHandling != MappedDataHandling::Use || inputFields[i]) {
-            outputField = prepareOutputField(outputDataset, inputGrid, inputFields[i], name, outputGrid);
+        if (m_mappedDataHandling != MappedDataHandling::Use || input.fields[i]) {
+            std::string outputFieldName = getFieldName(i);
+            if (i == 0 && output.viskoresDataset.HasField(getFieldName(i, true))) {
+                // if filter has created a dedicated output field, use it
+                outputFieldName = getFieldName(i, true);
+            }
+            output.fields[i] = prepareOutputField(input, output, i, outputFieldName);
         }
 
         // ... and write the result to the output ports
-        if (outputField || m_mappedDataHandling == MappedDataHandling::Generate) {
-            task->addObject(m_outputPorts[i], outputField);
-        } else if (outputGrid) {
-            task->addObject(m_outputPorts[i], outputGrid);
+        if (output.fields[i] || m_mappedDataHandling == MappedDataHandling::Generate) {
+            task->addObject(m_outputPorts[i], output.fields[i]);
+        } else if (output.vistleGrid) {
+            task->addObject(m_outputPorts[i], output.vistleGrid);
         }
     }
-
 
     return true;
 }
 
-bool VtkmModule::isValid(const ModuleStatusPtr &status) const
+bool VtkmModule::checkAndNotify(const ModuleStatusPtr &status) const
 {
-    if (strcmp(status->message(), ""))
-        sendText(status->messageType(), status->message());
-
-    return status->continueExecution();
+    return vistle::vtkm::checkAndNotify(*this, status);
 }
 
-bool VtkmModule::tryToExecuteFilter(const std::unique_ptr<viskores::filter::Filter> &filter,
-                                    const viskores::cont::DataSet &inputDataset,
+bool VtkmModule::tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::DataSet &inputDataset,
                                     viskores::cont::DataSet &outputDataset) const
 {
-    std::string kind, description, message, backtrace;
-
-    try {
-        try {
-            outputDataset = filter->Execute(inputDataset);
-            return true;
-        } catch (const viskores::cont::ErrorBadAllocation &error) {
-            kind = "memory allocation error";
-            description = "A memory allocation error occurred while executing the filter";
-            throw;
-        } catch (const viskores::cont::ErrorBadDevice &error) {
-            kind = "operation not supported by execution device";
-            description = "The filter attempted to perform an operation that is not supported by the execution device";
-            throw;
-        } catch (const viskores::cont::ErrorBadType &error) {
-            kind = "unsupported data type";
-            description = "An unsupported data type was encountered while executing the filter";
-            throw;
-        } catch (const viskores::cont::ErrorBadValue &error) {
-            kind = "unsupported data value";
-            description = "An invalid value was encountered while executing the filter";
-            throw;
-        } catch (const viskores::cont::ErrorExecution &error) {
-            kind = "execution environment error";
-            description = "An error occurred in the execution environment while executing the filter";
-            throw;
-        } catch (const viskores::cont::ErrorFilterExecution &error) {
-            kind = "filter setup error";
-            description = "The filter has not been set up correctly";
-            throw;
-        } catch (const viskores::cont::ErrorInternal &error) {
-            kind = "internal error";
-            description = "An internal error occurred while executing the filter, indicating a bug in Viskores";
-            throw;
-        }
-    } catch (const viskores::cont::Error &error) {
-        if (kind.empty())
-            kind = "unknown error";
-        kind = "Viskores " + kind;
-        message = error.GetMessage();
-        backtrace = error.GetStackTrace();
-    } catch (std::exception &error) {
-        kind = "standard exception ";
-        kind += typeid(error).name();
-        message = error.what();
-    } catch (...) {
-        kind = "unknown exception";
-    }
-
-    std::stringstream msg;
-    msg << "Execution of a Viskores filter failed with a " << kind << " exception";
-    if (!description.empty())
-        msg << " (" << description << ")";
-    if (!message.empty())
-        msg << ": " << message;
-    sendError(msg.str());
-
-    if (!backtrace.empty()) {
-        msg << "\nBacktrace:\n" << backtrace;
-    }
-
-    std::cerr << msg.str() << std::endl;
-
-    return false;
+    return vistle::vtkm::tryToExecuteFilter(*this, filter, inputDataset, outputDataset);
 }

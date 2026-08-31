@@ -21,6 +21,8 @@ private:
     vistle::IntParameter *m_useVtkm;
 
     bool compute(const std::shared_ptr<vistle::BlockTask> &task) const override;
+
+    bool checkAndNotify(const ModuleStatusPtr &status) const;
 };
 
 #endif

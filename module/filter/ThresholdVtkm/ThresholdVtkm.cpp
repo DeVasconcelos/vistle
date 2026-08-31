@@ -51,27 +51,26 @@ std::unique_ptr<viskores::filter::Filter> ThresholdVtkm::setUpFilter() const
     return filter;
 }
 
-Object::const_ptr ThresholdVtkm::prepareOutputGrid(const viskores::cont::DataSet &dataset,
-                                                   const Object::const_ptr &inputGrid) const
+Object::const_ptr ThresholdVtkm::prepareOutputGrid(const InputData &input, OutputData &output) const
 {
     // overriding this method because it should not be treated as error if the output grid is empty
-    auto outputGrid = vtkmGetGeometry(dataset);
+    auto outputGrid = vtkmGetGeometry(output.viskoresDataset);
+
     if (!outputGrid)
         return nullptr;
+
     updateMeta(outputGrid);
-    outputGrid->copyAttributes(inputGrid);
+    outputGrid->copyAttributes(input.vistleGrid);
+
     return outputGrid;
 }
 
-DataBase::ptr ThresholdVtkm::prepareOutputField(const viskores::cont::DataSet &dataset,
-                                                const Object::const_ptr &inputGrid,
-                                                const DataBase::const_ptr &inputField, const std::string &fieldName,
-                                                const Object::const_ptr &outputGrid) const
+DataBase::ptr ThresholdVtkm::prepareOutputField(const InputData &input, OutputData &output, int index,
+                                                const std::string &fieldName) const
 {
     // only prepare the output field if the output grid exists
-    if (outputGrid) {
-        return VtkmModule::prepareOutputField(dataset, inputGrid, inputField, fieldName, outputGrid);
-    } else {
-        return nullptr;
-    }
+    if (output.vistleGrid)
+        return VtkmModule::prepareOutputField(input, output, index, fieldName);
+
+    return nullptr;
 }

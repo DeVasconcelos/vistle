@@ -9,6 +9,7 @@
 #include <viskores/filter/field_transform/PointTransform.h>
 
 #include <vistle/vtkm/convert.h>
+#include <vistle/vtkm/vtkm_module_utils.h>
 #endif
 
 MODULE_MAIN(ApplyTransform)
@@ -55,7 +56,9 @@ bool ApplyTransform::compute()
 
                 viskores::filter::field_transform::PointTransform filter;
                 filter.SetTransform(M);
-                auto outDs = filter.Execute(inDs);
+                viskores::cont::DataSet outDs;
+                if (!vistle::vtkm::tryToExecuteFilter(*this, filter, inDs, outDs))
+                    return true;
                 outGrid = vistle::vtkmGetGeometry(outDs);
 #else
                 auto clone = coords->clone();

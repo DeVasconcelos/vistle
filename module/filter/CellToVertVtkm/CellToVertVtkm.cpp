@@ -18,11 +18,10 @@ CellToVertVtkm::CellToVertVtkm(const std::string &name, int moduleID, mpi::commu
 : VtkmModule(name, moduleID, comm)
 {}
 
-ModuleStatusPtr CellToVertVtkm::prepareInputField(const Port *port, const Object::const_ptr &grid,
-                                                  const DataBase::const_ptr &field, std::string &fieldName,
-                                                  viskores::cont::DataSet &dataset) const
+ModuleStatusPtr CellToVertVtkm::prepareInputField(const vistle::Port *port, InputData &input, int index) const
 {
-    auto mapping = field->guessMapping(grid);
+    auto field = input.fields[index];
+    auto mapping = field->guessMapping(input.vistleGrid);
     // ... make sure the mapping is either vertex or element
     if (mapping != DataBase::Element && mapping != DataBase::Vertex) {
         std::stringstream msg;
@@ -38,7 +37,7 @@ ModuleStatusPtr CellToVertVtkm::prepareInputField(const Port *port, const Object
     if (mapping == DataBase::Element) {
 #endif
         // transform to Viskores + add to dataset
-        return VtkmModule::prepareInputField(port, grid, field, fieldName, dataset);
+        return VtkmModule::prepareInputField(port, input, index);
     }
 
     return Success();
@@ -54,19 +53,16 @@ std::unique_ptr<viskores::filter::Filter> CellToVertVtkm::setUpFilter() const
     return filter;
 }
 
-Object::const_ptr CellToVertVtkm::prepareOutputGrid(const viskores::cont::DataSet &dataset,
-                                                    const Object::const_ptr &inputGrid) const
+Object::const_ptr CellToVertVtkm::prepareOutputGrid(const InputData &input, OutputData &output) const
 {
-    return nullptr;
+    return input.vistleGrid;
 }
 
-DataBase::ptr CellToVertVtkm::prepareOutputField(const viskores::cont::DataSet &dataset,
-                                                 const Object::const_ptr &inputGrid,
-                                                 const DataBase::const_ptr &inputField, const std::string &fieldName,
-                                                 const Object::const_ptr &outputGrid) const
+DataBase::ptr CellToVertVtkm::prepareOutputField(const InputData &input, OutputData &output, int index,
+                                                 const std::string &fieldName) const
 {
-    if (dataset.HasField(fieldName)) {
-        auto outputField = VtkmModule::prepareOutputField(dataset, inputGrid, inputField, fieldName, outputGrid);
+    if (output.viskoresDataset.HasField(fieldName)) {
+        auto outputField = VtkmModule::prepareOutputField(input, output, index, fieldName);
 
         // we want the output grid to be the same as the input grid, this way the output fields too will all
         // be mapped to the same grid
@@ -75,13 +71,15 @@ DataBase::ptr CellToVertVtkm::prepareOutputField(const viskores::cont::DataSet &
 #else
         outputField->setMapping(DataBase::Vertex);
 #endif
-        outputField->setGrid(inputGrid);
+        outputField->setGrid(input.vistleGrid);
+
         return outputField;
     } else {
         sendInfo("No filter applied for " + fieldName);
-        auto ndata = inputField->clone();
-        ndata->setGrid(inputGrid);
+        auto ndata = input.fields[index]->clone();
+        ndata->setGrid(input.vistleGrid);
         updateMeta(ndata);
+
         return ndata;
     }
 }

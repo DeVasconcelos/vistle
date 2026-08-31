@@ -19,12 +19,12 @@ GenNormalsVtkm::GenNormalsVtkm(const std::string &name, int moduleID, mpi::commu
     setParameterReadOnly(m_inward, m_autoOrient->getValue() == 0);
 }
 
-std::string GenNormalsVtkm::getFieldName(int i, bool output) const
+std::string GenNormalsVtkm::getFieldName(int index, bool output) const
 {
-    if (i == 0 && output) {
+    if (index == 0 && output) {
         return "Normals";
     }
-    return VtkmModule::getFieldName(i, output);
+    return VtkmModule::getFieldName(index, output);
 }
 
 bool GenNormalsVtkm::changeParameter(const vistle::Parameter *p)
@@ -46,19 +46,17 @@ std::unique_ptr<viskores::filter::Filter> GenNormalsVtkm::setUpFilter() const
     return filt;
 }
 
-Object::const_ptr GenNormalsVtkm::prepareOutputGrid(const viskores::cont::DataSet &dataset,
-                                                    const Object::const_ptr &inputGrid) const
+Object::const_ptr GenNormalsVtkm::prepareOutputGrid(const InputData &input, OutputData &output) const
 {
-    return inputGrid;
+    return input.vistleGrid;
 }
 
-DataBase::ptr GenNormalsVtkm::prepareOutputField(const viskores::cont::DataSet &dataset,
-                                                 const Object::const_ptr &inputGrid,
-                                                 const DataBase::const_ptr &inputField, const std::string &fieldName,
-                                                 const Object::const_ptr &outputGrid) const
+DataBase::ptr GenNormalsVtkm::prepareOutputField(const InputData &input, OutputData &output, int index,
+                                                 const std::string &fieldName) const
 {
     DataBase::Mapping mapping = m_perVertex->getValue() == 0 ? DataBase::Element : DataBase::Vertex;
-    if (auto mapped = vtkmGetField(dataset, fieldName, mapping)) {
+
+    if (auto mapped = vtkmGetField(output.viskoresDataset, fieldName, mapping)) {
         if (auto vec3 = Vec<Scalar, 3>::as(mapped)) {
             // make Normals
             auto norm = std::make_shared<Normals>(0, vec3->meta());
@@ -66,9 +64,10 @@ DataBase::ptr GenNormalsVtkm::prepareOutputField(const viskores::cont::DataSet &
                 norm->d()->x[i] = vec3->d()->x[i];
             mapped = norm;
         }
+
         updateMeta(mapped);
-        if (outputGrid)
-            mapped->setGrid(outputGrid);
+        if (output.vistleGrid)
+            mapped->setGrid(output.vistleGrid);
         mapped->describe("normals", id());
         return mapped;
     } else {

@@ -9,7 +9,9 @@
 #include <viskores/cont/DataSet.h>
 #include <viskores/cont/Field.h>
 #include <viskores/filter/vector_analysis/VectorMagnitude.h>
+
 #include <vistle/vtkm/convert.h>
+#include <vistle/vtkm/vtkm_module_utils.h>
 #endif
 
 DEFINE_ENUM_WITH_STRING_CONVERSIONS(Choices, (X)(Y)(Z)(AbsoluteValue))
@@ -64,7 +66,12 @@ vistle::Vec<vistle::Scalar>::ptr calculateAbsolute(typename vistle::Vec<vistle::
     mag.SetOutputFieldName(fld_out);
 
     // Run the filter on the dataset -> produces a new dataset with a scalar field
-    const auto outDs = mag.Execute(inDs);
+    viskores::cont::DataSet outDs;
+    auto status = vistle::vtkm::tryToExecuteFilter(mag, inDs, outDs);
+    if (!status->continueExecution()) {
+        std::cerr << "VecToScalar: ERROR: Viskores filter execution failed: " << status->message() << std::endl;
+        return nullptr;
+    }
 
     // Bring the produced scalar field back into Vistle form
     auto outField = vistle::vtkmGetField(outDs, fld_out, data->mapping());
