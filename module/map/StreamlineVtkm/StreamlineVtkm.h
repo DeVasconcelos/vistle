@@ -72,6 +72,9 @@ private:
     bool tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::DataSet &inputDataset,
                             viskores::cont::DataSet &outputDataset) const;
 
+    bool tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::PartitionedDataSet &inputDataset,
+                            viskores::cont::PartitionedDataSet &outputDataset) const;
+
     ModuleStatusPtr readInPorts(const std::shared_ptr<vistle::BlockTask> &task, vistle::Object::const_ptr &grid,
                                 std::vector<vistle::DataBase::const_ptr> &fields) const;
 

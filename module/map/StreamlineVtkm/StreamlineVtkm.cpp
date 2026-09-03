@@ -199,8 +199,16 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const Port *port, InputData &i
 
 bool StreamlineVtkm::reduce(int timestep)
 {
-    std::cerr << "Global number of partitions: " << m_globalData.partitionedDataset.GetGlobalNumberOfPartitions()
-              << ", number of partitions: " << m_globalData.partitionedDataset.GetNumberOfPartitions() << std::endl;
+    auto filter = setUpFilter();
+    filter->SetActiveField(getFieldName(0));
+
+    filter->SetOutputFieldName(getFieldName(0, true));
+    filter->SetFieldsToPass("", viskores::cont::Field::Association::Any, viskores::filter::FieldSelection::Mode::All);
+
+    viskores::cont::PartitionedDataSet output;
+    if (!this->tryToExecuteFilter(*filter, m_globalData.partitionedDataset, output))
+        return true;
+
     return true;
 }
 
@@ -465,6 +473,13 @@ DataBase::ptr StreamlineVtkm::prepareOutputField(const InputData &input, OutputD
 
 bool StreamlineVtkm::tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::DataSet &inputDataset,
                                         viskores::cont::DataSet &outputDataset) const
+{
+    return vistle::vtkm::tryToExecuteFilter(*this, filter, inputDataset, outputDataset);
+}
+
+bool StreamlineVtkm::tryToExecuteFilter(viskores::filter::Filter &filter,
+                                        const viskores::cont::PartitionedDataSet &inputDataset,
+                                        viskores::cont::PartitionedDataSet &outputDataset) const
 {
     return vistle::vtkm::tryToExecuteFilter(*this, filter, inputDataset, outputDataset);
 }
