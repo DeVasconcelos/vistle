@@ -1,8 +1,11 @@
 #ifndef VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H
 #define VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H
 
+#include <mutex>
 #include <vector>
+
 #include <viskores/cont/DataSet.h>
+#include <viskores/cont/PartitionedDataSet.h>
 #include <viskores/filter/Filter.h>
 #include <viskores/Particle.h>
 
@@ -22,6 +25,14 @@
 
 class StreamlineVtkm: public vistle::Module {
 public:
+    struct GlobalData {
+        viskores::cont::PartitionedDataSet partitionedDataset;
+        std::vector<vistle::Object::const_ptr> outputGrids;
+        std::vector<std::vector<vistle::DataBase::ptr>> outputFields;
+
+        std::mutex mutex;
+    };
+
     struct InputData {
         vistle::Object::const_ptr vistleGrid;
         std::vector<vistle::DataBase::const_ptr> fields;
@@ -46,11 +57,15 @@ private:
 
     std::vector<vistle::Port *> m_inputPorts, m_outputPorts;
 
+    mutable GlobalData m_globalData;
+
     vistle::IntParameter *m_printObjectInfo = nullptr;
 
     std::string getFieldName(int index, bool output = false) const;
 
     bool prepare() override;
+
+    bool reduce(int timestep) override;
 
     bool checkAndNotify(const ModuleStatusPtr &status) const;
 

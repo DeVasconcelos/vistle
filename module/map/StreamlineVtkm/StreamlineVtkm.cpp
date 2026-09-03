@@ -21,6 +21,8 @@ DEFINE_ENUM_WITH_STRING_CONVERSIONS(StartStyle, (Line)(Plane))
 StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm)
 : Module(name, moduleID, comm), m_numPorts(3), m_mappedDataHandling(MappedDataHandling::Require)
 {
+    setReducePolicy(message::ReducePolicy::PerTimestep);
+
     const MPI_Comm mpiComm = comm;
     const viskoresdiy::mpi::DIY_MPI_Comm diyComm{mpiComm};
     viskoresdiy::mpi::communicator viskoresComm(diyComm, false);
@@ -195,8 +197,66 @@ ModuleStatusPtr StreamlineVtkm::prepareInputField(const Port *port, InputData &i
     return vtkmAddField(input.viskoresDataset, field, getFieldName(index));
 }
 
+bool StreamlineVtkm::reduce(int timestep)
+{
+    std::cerr << "Global number of partitions: " << m_globalData.partitionedDataset.GetGlobalNumberOfPartitions()
+              << ", number of partitions: " << m_globalData.partitionedDataset.GetNumberOfPartitions() << std::endl;
+    return true;
+}
+
 bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) const
 {
+    InputData input;
+    std::vector<std::vector<vistle::Object::const_ptr>> grid;
+    std::vector<std::vector<std::vector<vistle::DataBase::const_ptr>>> data_in;
+    std::vector<viskores::cont::DataSet> viskoresDatasets;
+
+    auto status = readInPorts(task, input.vistleGrid, input.fields);
+    if (!checkAndNotify(status))
+        return true;
+
+    assert(m_outputPorts.size() == input.fields.size());
+
+    auto timestep = input.vistleGrid->getTimestep();
+    if (timestep < 0 && input.fields[0])
+        timestep = input.fields[0]->getTimestep();
+    if (timestep < 0)
+        timestep = -1;
+
+    const auto timestepIndex = static_cast<std::size_t>(timestep + 1);
+    if (grid.size() <= timestepIndex) {
+        grid.resize(timestepIndex + 1);
+        data_in.resize(m_numPorts);
+        for (auto &portData: data_in)
+            portData.resize(timestepIndex + 1);
+    } else {
+        for (auto &portData: data_in) {
+            if (portData.size() <= timestepIndex)
+                portData.resize(timestepIndex + 1);
+        }
+    }
+
+    grid[timestepIndex].push_back(input.vistleGrid);
+    viskoresDatasets.emplace_back();
+    status = vtkmSetGrid(viskoresDatasets.back(), input.vistleGrid);
+    if (!checkAndNotify(status))
+        return true;
+
+    for (std::size_t i = 0; i < input.fields.size(); ++i) {
+        data_in[i][timestepIndex].push_back(input.fields[i]);
+        auto field = data_in[i][timestepIndex].back();
+        if (field) {
+            status = vtkmAddField(viskoresDatasets.back(), field, getFieldName(i));
+            if (!checkAndNotify(status))
+                return true;
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(m_globalData.mutex);
+    m_globalData.partitionedDataset.AppendPartitions(viskoresDatasets);
+
+    return true;
+#if 0
     InputData input;
     OutputData output;
 
@@ -318,6 +378,7 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
     }
 
     return true;
+#endif
 }
 
 viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray() const
