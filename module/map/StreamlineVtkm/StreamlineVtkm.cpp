@@ -158,29 +158,6 @@ bool StreamlineVtkm::changeParameter(const Parameter *param)
 
 ModuleStatusPtr StreamlineVtkm::prepareInputGrid(InputData &input) const
 {
-    /*
-        TODO: 
-        As the module is now, it cannot handle partitioned input grids as the Streamline
-        filter will not know that it has to exchange particles with other partitions.
-        While it seems like the filter does support this, given a viskores::cont::Par-
-        titionedDataSet (see viskores/viskores/filter/flow/internal/ParticleExchanger.h),
-        as far as I understand, for us, each block creates their own unpartitioned dataset.
-        The filter either does so serially or using MPI (if VISKORES_ENABLE_MPI is ON, which,
-        in our case, it never is).
-
-        So, we could either:
-        - implement a custom filter that handles the particle exchange between partitions 
-          (similar to the one Viskores has, but for our setup). This would also require digging
-          into how MPI communication is handled in Viskores, especially when GPUs are involved
-        - when converting a partitioned block to the Viskores data format, use viskores::cont::
-          PartitionedDataSet, although this would affect a lot of code, and in the end, still
-          be serial, as VISKORES_ENABLE_MPI is OFF
-        - have the master rank create a viskores::cont::PartitionedDataSet here (although again
-          this would be serial, as VISKORES_ENABLE_MPI is OFF)
-    */
-    /*     if (input.vistleGrid->getNumBlocks() != 1)
-        return Error("StreamlineVtkm: Partitioned input grids are not supported yet!"); */
-
     return vtkmSetGrid(input.viskoresDataset, input.vistleGrid);
 }
 
@@ -208,6 +185,42 @@ bool StreamlineVtkm::reduce(int timestep)
     viskores::cont::PartitionedDataSet output;
     if (!this->tryToExecuteFilter(*filter, m_globalData.partitionedDataset, output))
         return true;
+
+    std::lock_guard<std::mutex> lock(m_globalData.mutex);
+    m_globalData.outputGrids.clear();
+    m_globalData.outputFields.assign(m_numPorts, {});
+
+    for (viskores::Id partitionIndex = 0; partitionIndex < output.GetNumberOfPartitions(); ++partitionIndex) {
+        const auto &dataset = output.GetPartition(partitionIndex);
+        auto outputGrid = vtkmGetGeometry(dataset);
+        if (!outputGrid) {
+            sendError("Could not convert StreamlineVtkm output geometry to a Vistle object.");
+            continue;
+        }
+
+        updateMeta(outputGrid);
+        m_globalData.outputGrids.push_back(outputGrid);
+
+        for (int port = 0; port < m_numPorts; ++port) {
+            if (!m_outputPorts[port]->isConnected())
+                continue;
+
+            std::string fieldName = getFieldName(port);
+            if (port == 0 && dataset.HasField(getFieldName(0, true)))
+                fieldName = getFieldName(0, true);
+
+            auto field = vtkmGetField(dataset, fieldName, DataBase::Unspecified, false);
+            if (field) {
+                updateMeta(field);
+                field->setGrid(outputGrid);
+                m_globalData.outputFields[port].push_back(field);
+                addObject(m_outputPorts[port], field);
+            } else {
+                m_globalData.outputFields[port].push_back(nullptr);
+                addObject(m_outputPorts[port], outputGrid);
+            }
+        }
+    }
 
     return true;
 }
