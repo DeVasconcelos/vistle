@@ -152,17 +152,9 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
     if (timestep < 0)
         timestep = -1;
 
-    status = vtkmSetGrid(viskoresDataset, vistleGrid);
+    status = transformInputToViskores(vistleGrid, fields, viskoresDataset);
     if (!checkAndNotify(status))
         return true;
-
-    for (std::size_t i = 0; i < fields.size(); ++i) {
-        if (fields[i]) {
-            status = vtkmAddField(viskoresDataset, fields[i], getFieldName(i));
-            if (!checkAndNotify(status))
-                return true;
-        }
-    }
 
     std::lock_guard<std::mutex> lock(m_globalData.mutex);
     auto numSteps = static_cast<std::size_t>(timestep + 1);
@@ -219,7 +211,6 @@ bool StreamlineVtkm::reduce(int timestep)
     // boundaries, merge all blocks of this timestep into a single dataset to probe fields from
     auto mergedInputDataset = viskores::cont::MergePartitionedDataSet(inputPartitionedDataset);
 
-    // like Tracer, tag the generated grid/fields with the timestep they belong to
     Meta meta;
     meta.setNumBlocks(size());
     meta.setBlock(rank());
@@ -234,8 +225,6 @@ bool StreamlineVtkm::reduce(int timestep)
             continue;
         }
 
-        // setMeta() must come before updateMeta(), since it resets creator/generation to defaults,
-        // which updateMeta() then fills in correctly; copyAttributes() only affects the attribute list
         outputGrid->setMeta(meta);
         updateMeta(outputGrid);
         // attributes (e.g. species name, color map range) are the same on every block of a given
@@ -268,7 +257,6 @@ bool StreamlineVtkm::reduce(int timestep)
             }
 
             if (field) {
-                // setMeta() must come before updateMeta(), for the same reason as for outputGrid above
                 field->setMeta(meta);
                 updateMeta(field);
                 vistle::DataBase::const_ptr origField;
@@ -344,6 +332,25 @@ std::string StreamlineVtkm::getFieldName(int index, bool output) const
     if (index == 0 && output)
         name += "_out";
     return name;
+}
+
+ModuleStatusPtr StreamlineVtkm::transformInputToViskores(const Object::const_ptr &grid,
+                                                         const std::vector<DataBase::const_ptr> &fields,
+                                                         viskores::cont::DataSet &dataset) const
+{
+    auto status = vtkmSetGrid(dataset, grid);
+    if (!status->continueExecution())
+        return status;
+
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (fields[i]) {
+            status = vtkmAddField(dataset, fields[i], getFieldName(i));
+            if (!status->continueExecution())
+                return status;
+        }
+    }
+
+    return Success();
 }
 
 viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray() const

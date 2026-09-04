@@ -65,6 +65,10 @@ private:
                                 std::vector<vistle::DataBase::const_ptr> &fields) const;
     std::string getFieldName(int index, bool output = false) const;
 
+    ModuleStatusPtr transformInputToViskores(const vistle::Object::const_ptr &grid,
+                                             const std::vector<vistle::DataBase::const_ptr> &fields,
+                                             viskores::cont::DataSet &dataset) const;
+
     viskores::cont::ArrayHandle<viskores::Particle> createSeedArray() const;
     std::unique_ptr<viskores::filter::Filter> setUpFilter() const;
 
