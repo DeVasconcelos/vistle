@@ -30,6 +30,11 @@ public:
         std::vector<vistle::Object::const_ptr> outputGrids;
         std::vector<std::vector<vistle::DataBase::ptr>> outputFields;
 
+        // original, per-partition input objects, indexed the same way as partitionedDatasets, so
+        // that reduce() can copy their attributes onto the corresponding output grid/fields
+        std::vector<std::vector<vistle::Object::const_ptr>> inputGrids;
+        std::vector<std::vector<std::vector<vistle::DataBase::const_ptr>>> inputFields;
+
         std::mutex mutex;
 
         void clear();

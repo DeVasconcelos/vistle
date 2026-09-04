@@ -2,6 +2,7 @@
 #include <viskores/filter/resampling/Probe.h>
 #include <viskores/VectorAnalysis.h>
 #include <viskores/cont/EnvironmentTracker.h>
+#include <viskores/cont/MergePartitionedDataSet.h>
 #include <viskores/thirdparty/diy/diy.h>
 
 #include <vistle/util/enum.h>
@@ -23,6 +24,8 @@ void StreamlineVtkm::GlobalData::clear()
     partitionedDatasets.clear();
     outputGrids.clear();
     outputFields.clear();
+    inputGrids.clear();
+    inputFields.clear();
 }
 
 bool StreamlineVtkm::GlobalData::isEmpty() const
@@ -195,16 +198,25 @@ bool StreamlineVtkm::reduce(int timestep)
     const auto idx = static_cast<std::size_t>(timestep + 1);
 
     viskores::cont::PartitionedDataSet inputPartitionedDataset;
+    std::vector<vistle::Object::const_ptr> inputGrids;
+    std::vector<std::vector<vistle::DataBase::const_ptr>> inputFieldsForPorts; // [port][partition]
     {
         std::lock_guard<std::mutex> lock(m_globalData.mutex);
-        if (idx >= m_globalData.partitionedDatasets.size()) {
-            sendError("No input data for timestep %d", timestep);
+        // reduce(-1) is always called once in addition to reduce() for every actual timestep (see
+        // Module::reduceWrapper), so it is normal for there to be no data left to process for it
+        if (idx >= m_globalData.partitionedDatasets.size())
             return true;
-        }
         inputPartitionedDataset = m_globalData.partitionedDatasets[idx];
-        if (inputPartitionedDataset.GetNumberOfPartitions() == 0) {
-            sendError("Paritioned dataset for timestep %d is empty", timestep);
+        if (inputPartitionedDataset.GetNumberOfPartitions() == 0)
             return true;
+
+        if (idx < m_globalData.inputGrids.size())
+            inputGrids = m_globalData.inputGrids[idx];
+
+        inputFieldsForPorts.resize(m_globalData.inputFields.size());
+        for (std::size_t port = 0; port < m_globalData.inputFields.size(); ++port) {
+            if (idx < m_globalData.inputFields[port].size())
+                inputFieldsForPorts[port] = m_globalData.inputFields[port][idx];
         }
     }
 
@@ -218,6 +230,13 @@ bool StreamlineVtkm::reduce(int timestep)
     if (!this->tryToExecuteFilter(*filter, inputPartitionedDataset, output))
         return true;
 
+    // the Streamline filter can drop input partitions that never received a particle and does not
+    // otherwise report which input partition an output partition came from, so the output partitions
+    // cannot be positionally matched to the input ones; since streamlines can also cross block
+    // boundaries, merge all blocks of this timestep into a single dataset to probe fields from
+    auto mergedInputDataset = viskores::cont::MergePartitionedDataSet(inputPartitionedDataset);
+
+    // like Tracer, tag the generated grid/fields with the timestep they belong to
     Meta meta;
     meta.setNumBlocks(size());
     meta.setBlock(rank());
@@ -236,23 +255,53 @@ bool StreamlineVtkm::reduce(int timestep)
             continue;
         }
 
+        // setMeta() must come before updateMeta(), since it resets creator/generation to defaults,
+        // which updateMeta() then fills in correctly; copyAttributes() only affects the attribute list
         outputGrid->setMeta(meta);
         updateMeta(outputGrid);
+        // attributes (e.g. species name, color map range) are the same on every block of a given
+        // timestep, so any input grid can be used as the source, regardless of which output partition
+        // this is (output partitions cannot be positionally matched to input ones, see above)
+        if (!inputGrids.empty()) {
+            if (auto &vistleGrid = inputGrids.front())
+                outputGrid->copyAttributes(vistleGrid);
+        }
         m_globalData.outputGrids.push_back(outputGrid);
 
         for (int port = 0; port < m_numPorts; ++port) {
             if (!m_outputPorts[port]->isConnected())
                 continue;
 
-            std::string fieldName = getFieldName(port);
-            if (port == 0 && dataset.HasField(getFieldName(0, true)))
-                fieldName = getFieldName(0, true);
+            DataBase::ptr field;
+            if (port == 0 && dataset.HasField(getFieldName(0, true))) {
+                // the field that was integrated is already attached to the lines by the Streamline filter
+                field = vtkmGetField(dataset, getFieldName(0, true), DataBase::Unspecified, false);
+            } else {
+                // the Streamline filter does not map the other input fields onto the generated lines,
+                // so we have to probe them from the merged input dataset, as in prepareOutputField()
+                auto probe = viskores::filter::resampling::Probe();
+                probe.SetGeometry(dataset);
+                probe.SetOutputFieldName(getFieldName(port));
 
-            auto field = vtkmGetField(dataset, fieldName, DataBase::Unspecified, false);
+                viskores::cont::DataSet probeOutput;
+                if (this->tryToExecuteFilter(probe, mergedInputDataset, probeOutput)) {
+                    field = vtkmGetField(probeOutput, getFieldName(port));
+                }
+            }
+
             if (field) {
-                field->setGrid(outputGrid);
+                // setMeta() must come before updateMeta(), for the same reason as for outputGrid above
                 field->setMeta(meta);
                 updateMeta(field);
+                vistle::DataBase::const_ptr origField;
+                if (static_cast<std::size_t>(port) < inputFieldsForPorts.size() && !inputFieldsForPorts[port].empty())
+                    origField = inputFieldsForPorts[port].front();
+                if (origField) {
+                    auto mapping = field->mapping();
+                    field->copyAttributes(origField);
+                    field->setMapping(mapping);
+                }
+                field->setGrid(outputGrid);
                 m_globalData.outputFields[port].push_back(field);
                 addObject(m_outputPorts[port], field);
             } else {
@@ -269,11 +318,6 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
 {
     InputData input;
 
-    // TODO: we need to consider timesteps in global data
-    std::vector<std::vector<vistle::Object::const_ptr>> grid;
-    std::vector<std::vector<std::vector<vistle::DataBase::const_ptr>>> data_in;
-    std::vector<viskores::cont::DataSet> viskoresDatasets;
-
     auto status = readInPorts(task, input.vistleGrid, input.fields);
     if (!checkAndNotify(status))
         return true;
@@ -281,7 +325,6 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
     assert(m_outputPorts.size() == input.fields.size());
 
     auto timestep = input.vistleGrid->getTimestep();
-    std::cout << "StreamlineVtkm::compute: timestep = " << timestep << std::endl;
 
     if (input.fields[0]) {
         if (timestep != input.fields[0]->getTimestep()) {
@@ -294,37 +337,34 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
         timestep = -1;
 
     const auto numSteps = static_cast<std::size_t>(timestep + 1);
-    if (grid.size() <= numSteps) {
-        grid.resize(numSteps + 1);
-        data_in.resize(m_numPorts);
-        for (auto &field: data_in)
-            field.resize(numSteps + 1);
-    }
 
-    grid[numSteps].push_back(input.vistleGrid);
     status = prepareInputGrid(input);
     if (!checkAndNotify(status))
         return true;
 
     for (std::size_t i = 0; i < input.fields.size(); ++i) {
-        data_in[i][numSteps].push_back(input.fields[i]);
-        auto field = data_in[i][numSteps].back();
-        if (field) {
+        if (input.fields[i]) {
             status = prepareInputField(m_inputPorts[i], input, i);
             if (!checkAndNotify(status))
                 return true;
         }
     }
 
-    viskoresDatasets.push_back(input.viskoresDataset);
-
     std::lock_guard<std::mutex> lock(m_globalData.mutex);
+    if (m_globalData.inputFields.size() < input.fields.size())
+        m_globalData.inputFields.resize(input.fields.size());
+
     if (m_globalData.partitionedDatasets.size() < numSteps + 1) {
         m_globalData.partitionedDatasets.resize(numSteps + 1);
-        m_globalData.partitionedDatasets[numSteps] = viskores::cont::PartitionedDataSet();
+        m_globalData.inputGrids.resize(numSteps + 1);
+        for (auto &field: m_globalData.inputFields)
+            field.resize(numSteps + 1);
     }
 
-    m_globalData.partitionedDatasets[numSteps].AppendPartitions(viskoresDatasets);
+    m_globalData.partitionedDatasets[numSteps].AppendPartitions({input.viskoresDataset});
+    m_globalData.inputGrids[numSteps].push_back(input.vistleGrid);
+    for (std::size_t i = 0; i < input.fields.size(); ++i)
+        m_globalData.inputFields[i][numSteps].push_back(input.fields[i]);
 
     return true;
 }
