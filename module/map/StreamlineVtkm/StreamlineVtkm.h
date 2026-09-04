@@ -39,13 +39,10 @@ public:
         void resize(std::size_t newSize, std::size_t numFields);
     };
 
-    DEFINE_ENUM_WITH_STRING_CONVERSIONS(MappedDataHandling, (Use)(Require)(Discard)(Generate))
-
     StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm);
 
 private:
     const int m_numPorts;
-    const MappedDataHandling m_mappedDataHandling;
 
     std::vector<vistle::Port *> m_inputPorts, m_outputPorts;
 

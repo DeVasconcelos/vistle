@@ -45,7 +45,7 @@ void StreamlineVtkm::GlobalData::resize(std::size_t newSize, std::size_t numFiel
 }
 
 StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm)
-: Module(name, moduleID, comm), m_numPorts(3), m_mappedDataHandling(MappedDataHandling::Require)
+: Module(name, moduleID, comm), m_numPorts(3)
 {
     setReducePolicy(message::ReducePolicy::PerTimestep);
 
@@ -58,9 +58,6 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
     viskores::cont::EnvironmentTracker::SetCommunicator(viskoresComm);
 
     assert(m_numPorts > 0);
-    bool dataInput =
-        m_mappedDataHandling != MappedDataHandling::Discard && m_mappedDataHandling != MappedDataHandling::Generate;
-    bool dataOutput = m_mappedDataHandling != MappedDataHandling::Discard;
 
     for (int i = 0; i < m_numPorts; ++i) {
         std::string in("data_in");
@@ -69,8 +66,8 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
             in += std::to_string(i);
             out += std::to_string(i);
         }
-        m_inputPorts.push_back(createInputPort(in, dataInput ? "input grid with mapped data" : "input grid"));
-        m_outputPorts.push_back(createOutputPort(out, dataOutput ? "output grid with mapped data" : "output grid"));
+        m_inputPorts.push_back(createInputPort(in, "input grid with mapped data"));
+        m_outputPorts.push_back(createOutputPort(out, "output grid with mapped data"));
         linkPorts(m_inputPorts[i], m_outputPorts[i]);
         if (i > 0) {
             setPortOptional(m_inputPorts[i], true);
