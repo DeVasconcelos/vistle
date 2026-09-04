@@ -74,8 +74,6 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
         }
     }
 
-    // ------------------------------------------------------------------------------
-
     setCurrentParameterGroup("Seed Points");
     const Integer max_no_seeds = 300;
     m_numberOfSeeds = addIntParameter("number_of_seeds", "number of seed points", 2);
@@ -98,14 +96,6 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
         addIntParameter("integration_method", "integration method", IntegrationMethod::RK4, Parameter::Choice);
     V_ENUM_SET_CHOICES_SCOPE(m_integrationMethod, IntegrationMethod, );
     m_stepSize = addFloatParameter("step_size", "integration step size", 0.1f);
-}
-
-std::string StreamlineVtkm::getFieldName(int index, bool output) const
-{
-    std::string name = "data_at_port_" + std::to_string(index);
-    if (index == 0 && output)
-        name += "_out";
-    return name;
 }
 
 bool StreamlineVtkm::prepare()
@@ -132,52 +122,58 @@ bool StreamlineVtkm::prepare()
     return Module::prepare();
 }
 
-ModuleStatusPtr StreamlineVtkm::readInPorts(const std::shared_ptr<BlockTask> &task, Object::const_ptr &grid,
-                                            std::vector<DataBase::const_ptr> &fields) const
+bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) const
 {
-    for (int i = 0; i < m_numPorts; ++i) {
-        if (!m_inputPorts[i]->isConnected()) {
-            fields.push_back(nullptr);
-            continue;
+    vistle::Object::const_ptr vistleGrid;
+    std::vector<vistle::DataBase::const_ptr> fields;
+
+    viskores::cont::DataSet viskoresDataset;
+
+    auto status = readInPorts(task, vistleGrid, fields);
+    if (!checkAndNotify(status))
+        return true;
+
+    assert(m_outputPorts.size() == fields.size());
+
+    auto timestep = vistleGrid->getTimestep();
+
+    if (fields[0]) {
+        if (timestep != fields[0]->getTimestep()) {
+            sendError("timestep mismatch: grid = %d, field = %d", timestep, fields[0]->getTimestep());
+            return true;
         }
 
-        auto container = task->accept<Object>(m_inputPorts[i]);
-        auto split = splitContainerObject(container);
-        auto geometry = split.geometry;
-        auto data = split.mapped;
-
-        // make sure there is data on the input port if the corresponding output port is connected
-        if (!geometry && !data)
-            return Error("No data on input port " + m_inputPorts[i]->getName() + ", even though it is connected");
-
-        fields.push_back(data);
-
-        // make sure all data fields are defined on the same grid
-        if (grid) {
-            if (geometry && geometry->getHandle() != grid->getHandle()) {
-                return Error("The grid on " + m_inputPorts[i]->getName() +
-                             " does not match the grid on the other input ports!");
-            }
-        } else {
-            grid = geometry;
+        if (auto in = Vec<Scalar, 3>::as(fields[0]); !in) {
+            sendError("Error: Input field at port " + m_inputPorts[0]->getName() + " must be a 3D vector field!");
+            return true;
         }
     }
 
-    if (!grid)
-        return Error("Could not find a valid input grid on any input port");
+    if (timestep < 0)
+        timestep = -1;
 
-    return Success();
-}
+    status = vtkmSetGrid(viskoresDataset, vistleGrid);
+    if (!checkAndNotify(status))
+        return true;
 
-bool StreamlineVtkm::changeParameter(const Parameter *param)
-{
-    if (param == m_startStyle) {
-        setParameterReadOnly(m_direction, m_startStyle->getValue() != Plane);
-    } else if (param == m_maxNumberOfSeeds) {
-        setParameterRange(m_numberOfSeeds, (Integer)1, m_maxNumberOfSeeds->getValue());
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (fields[i]) {
+            status = vtkmAddField(viskoresDataset, fields[i], getFieldName(i));
+            if (!checkAndNotify(status))
+                return true;
+        }
     }
 
-    return Module::changeParameter(param);
+    std::lock_guard<std::mutex> lock(m_globalData.mutex);
+    auto numSteps = static_cast<std::size_t>(timestep + 1);
+    m_globalData.resize(numSteps + 1, fields.size());
+
+    m_globalData.partitionedDatasets[numSteps].AppendPartitions({viskoresDataset});
+    m_globalData.inputGrids[numSteps].push_back(vistleGrid);
+    for (std::size_t i = 0; i < fields.size(); ++i)
+        m_globalData.inputFields[i][numSteps].push_back(fields[i]);
+
+    return true;
 }
 
 bool StreamlineVtkm::reduce(int timestep)
@@ -294,58 +290,60 @@ bool StreamlineVtkm::reduce(int timestep)
     return true;
 }
 
-bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) const
+bool StreamlineVtkm::changeParameter(const Parameter *param)
 {
-    vistle::Object::const_ptr vistleGrid;
-    std::vector<vistle::DataBase::const_ptr> fields;
+    if (param == m_startStyle) {
+        setParameterReadOnly(m_direction, m_startStyle->getValue() != Plane);
+    } else if (param == m_maxNumberOfSeeds) {
+        setParameterRange(m_numberOfSeeds, (Integer)1, m_maxNumberOfSeeds->getValue());
+    }
 
-    viskores::cont::DataSet viskoresDataset;
+    return Module::changeParameter(param);
+}
 
-    auto status = readInPorts(task, vistleGrid, fields);
-    if (!checkAndNotify(status))
-        return true;
-
-    assert(m_outputPorts.size() == fields.size());
-
-    auto timestep = vistleGrid->getTimestep();
-
-    if (fields[0]) {
-        if (timestep != fields[0]->getTimestep()) {
-            sendError("timestep mismatch: grid = %d, field = %d", timestep, fields[0]->getTimestep());
-            return true;
+ModuleStatusPtr StreamlineVtkm::readInPorts(const std::shared_ptr<BlockTask> &task, Object::const_ptr &grid,
+                                            std::vector<DataBase::const_ptr> &fields) const
+{
+    for (int i = 0; i < m_numPorts; ++i) {
+        if (!m_inputPorts[i]->isConnected()) {
+            fields.push_back(nullptr);
+            continue;
         }
 
-        if (auto in = Vec<Scalar, 3>::as(fields[0]); !in) {
-            sendError("Error: Input field at port " + m_inputPorts[0]->getName() + " must be a 3D vector field!");
-            return true;
+        auto container = task->accept<Object>(m_inputPorts[i]);
+        auto split = splitContainerObject(container);
+        auto geometry = split.geometry;
+        auto data = split.mapped;
+
+        // make sure there is data on the input port if the corresponding output port is connected
+        if (!geometry && !data)
+            return Error("No data on input port " + m_inputPorts[i]->getName() + ", even though it is connected");
+
+        fields.push_back(data);
+
+        // make sure all data fields are defined on the same grid
+        if (grid) {
+            if (geometry && geometry->getHandle() != grid->getHandle()) {
+                return Error("The grid on " + m_inputPorts[i]->getName() +
+                             " does not match the grid on the other input ports!");
+            }
+        } else {
+            grid = geometry;
         }
     }
 
-    if (timestep < 0)
-        timestep = -1;
+    if (!grid)
+        return Error("Could not find a valid input grid on any input port");
 
-    status = vtkmSetGrid(viskoresDataset, vistleGrid);
-    if (!checkAndNotify(status))
-        return true;
+    return Success();
+}
 
-    for (std::size_t i = 0; i < fields.size(); ++i) {
-        if (fields[i]) {
-            status = vtkmAddField(viskoresDataset, fields[i], getFieldName(i));
-            if (!checkAndNotify(status))
-                return true;
-        }
-    }
-
-    std::lock_guard<std::mutex> lock(m_globalData.mutex);
-    auto numSteps = static_cast<std::size_t>(timestep + 1);
-    m_globalData.resize(numSteps + 1, fields.size());
-
-    m_globalData.partitionedDatasets[numSteps].AppendPartitions({viskoresDataset});
-    m_globalData.inputGrids[numSteps].push_back(vistleGrid);
-    for (std::size_t i = 0; i < fields.size(); ++i)
-        m_globalData.inputFields[i][numSteps].push_back(fields[i]);
-
-    return true;
+std::string StreamlineVtkm::getFieldName(int index, bool output) const
+{
+    std::string name = "data_at_port_" + std::to_string(index);
+    if (index == 0 && output)
+        name += "_out";
+    return name;
 }
 
 viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray() const
@@ -382,6 +380,11 @@ std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
     return filter;
 }
 
+bool StreamlineVtkm::checkAndNotify(const ModuleStatusPtr &status) const
+{
+    return vistle::vtkm::checkAndNotify(*this, status);
+}
+
 bool StreamlineVtkm::tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::DataSet &inputDataset,
                                         viskores::cont::DataSet &outputDataset) const
 {
@@ -393,9 +396,4 @@ bool StreamlineVtkm::tryToExecuteFilter(viskores::filter::Filter &filter,
                                         viskores::cont::PartitionedDataSet &outputDataset) const
 {
     return vistle::vtkm::tryToExecuteFilter(*this, filter, inputDataset, outputDataset);
-}
-
-bool StreamlineVtkm::checkAndNotify(const ModuleStatusPtr &status) const
-{
-    return vistle::vtkm::checkAndNotify(*this, status);
 }

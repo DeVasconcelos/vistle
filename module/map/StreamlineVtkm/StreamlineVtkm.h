@@ -43,27 +43,7 @@ public:
 
 private:
     const int m_numPorts;
-
     std::vector<vistle::Port *> m_inputPorts, m_outputPorts;
-
-    mutable GlobalData m_globalData;
-
-    std::string getFieldName(int index, bool output = false) const;
-
-    bool compute(const std::shared_ptr<vistle::BlockTask> &task) const override;
-    bool prepare() override;
-    bool reduce(int timestep) override;
-
-    bool checkAndNotify(const ModuleStatusPtr &status) const;
-
-    bool tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::DataSet &inputDataset,
-                            viskores::cont::DataSet &outputDataset) const;
-
-    bool tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::PartitionedDataSet &inputDataset,
-                            viskores::cont::PartitionedDataSet &outputDataset) const;
-
-    ModuleStatusPtr readInPorts(const std::shared_ptr<vistle::BlockTask> &task, vistle::Object::const_ptr &grid,
-                                std::vector<vistle::DataBase::const_ptr> &fields) const;
 
     vistle::IntParameter *m_integrationMethod;
     vistle::IntParameter *m_numberOfSeeds, *m_maxNumberOfSeeds, *m_numberOfSteps;
@@ -74,11 +54,27 @@ private:
     vistle::VectorParameter *m_direction;
     vistle::VectorParameter *m_startPoint1, *m_startPoint2;
 
+    mutable GlobalData m_globalData;
+
+    bool prepare() override;
+    bool compute(const std::shared_ptr<vistle::BlockTask> &task) const override;
+    bool reduce(int timestep) override;
     bool changeParameter(const vistle::Parameter *param) override;
 
-    std::unique_ptr<viskores::filter::Filter> setUpFilter() const;
+    ModuleStatusPtr readInPorts(const std::shared_ptr<vistle::BlockTask> &task, vistle::Object::const_ptr &grid,
+                                std::vector<vistle::DataBase::const_ptr> &fields) const;
+    std::string getFieldName(int index, bool output = false) const;
 
     viskores::cont::ArrayHandle<viskores::Particle> createSeedArray() const;
+    std::unique_ptr<viskores::filter::Filter> setUpFilter() const;
+
+    bool checkAndNotify(const ModuleStatusPtr &status) const;
+
+    bool tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::DataSet &inputDataset,
+                            viskores::cont::DataSet &outputDataset) const;
+
+    bool tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::PartitionedDataSet &inputDataset,
+                            viskores::cont::PartitionedDataSet &outputDataset) const;
 };
 
 #endif // VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H
