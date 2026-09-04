@@ -1,6 +1,7 @@
 #ifndef VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H
 #define VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H
 
+#include <cstddef>
 #include <mutex>
 #include <vector>
 
@@ -26,33 +27,16 @@
 class StreamlineVtkm: public vistle::Module {
 public:
     struct GlobalData {
-        std::vector<viskores::cont::PartitionedDataSet> partitionedDatasets;
-        std::vector<vistle::Object::const_ptr> outputGrids;
-        std::vector<std::vector<vistle::DataBase::ptr>> outputFields;
-
-        // original, per-partition input objects, indexed the same way as partitionedDatasets, so
-        // that reduce() can copy their attributes onto the corresponding output grid/fields
         std::vector<std::vector<vistle::Object::const_ptr>> inputGrids;
         std::vector<std::vector<std::vector<vistle::DataBase::const_ptr>>> inputFields;
+
+        std::vector<viskores::cont::PartitionedDataSet> partitionedDatasets;
 
         std::mutex mutex;
 
         void clear();
         bool isEmpty() const;
-    };
-
-    struct InputData {
-        vistle::Object::const_ptr vistleGrid;
-        std::vector<vistle::DataBase::const_ptr> fields;
-
-        viskores::cont::DataSet viskoresDataset;
-    };
-
-    struct OutputData {
-        vistle::Object::const_ptr vistleGrid;
-        std::vector<vistle::DataBase::ptr> fields;
-
-        viskores::cont::DataSet viskoresDataset;
+        void resize(std::size_t newSize, std::size_t numFields);
     };
 
     DEFINE_ENUM_WITH_STRING_CONVERSIONS(MappedDataHandling, (Use)(Require)(Discard)(Generate))
@@ -67,12 +51,10 @@ private:
 
     mutable GlobalData m_globalData;
 
-    vistle::IntParameter *m_printObjectInfo = nullptr;
-
     std::string getFieldName(int index, bool output = false) const;
 
+    bool compute(const std::shared_ptr<vistle::BlockTask> &task) const override;
     bool prepare() override;
-
     bool reduce(int timestep) override;
 
     bool checkAndNotify(const ModuleStatusPtr &status) const;
@@ -86,8 +68,6 @@ private:
     ModuleStatusPtr readInPorts(const std::shared_ptr<vistle::BlockTask> &task, vistle::Object::const_ptr &grid,
                                 std::vector<vistle::DataBase::const_ptr> &fields) const;
 
-    // ---------------------------------------------------------------------------------
-
     vistle::IntParameter *m_integrationMethod;
     vistle::IntParameter *m_numberOfSeeds, *m_maxNumberOfSeeds, *m_numberOfSteps;
     vistle::IntParameter *m_startStyle;
@@ -99,18 +79,7 @@ private:
 
     bool changeParameter(const vistle::Parameter *param) override;
 
-    ModuleStatusPtr prepareInputGrid(InputData &input) const;
-
-    ModuleStatusPtr prepareInputField(const vistle::Port *port, InputData &input, int index) const;
-
-    bool compute(const std::shared_ptr<vistle::BlockTask> &task) const override;
-
     std::unique_ptr<viskores::filter::Filter> setUpFilter() const;
-
-    vistle::Object::const_ptr prepareOutputGrid(const InputData &input, OutputData &output) const;
-
-    vistle::DataBase::ptr prepareOutputField(const InputData &input, OutputData &output, int index,
-                                             const std::string &fieldName) const;
 
     viskores::cont::ArrayHandle<viskores::Particle> createSeedArray() const;
 };

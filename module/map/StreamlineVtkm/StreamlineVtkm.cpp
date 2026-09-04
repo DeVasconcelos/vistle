@@ -22,15 +22,26 @@ DEFINE_ENUM_WITH_STRING_CONVERSIONS(StartStyle, (Line)(Plane))
 void StreamlineVtkm::GlobalData::clear()
 {
     partitionedDatasets.clear();
-    outputGrids.clear();
-    outputFields.clear();
     inputGrids.clear();
     inputFields.clear();
 }
 
 bool StreamlineVtkm::GlobalData::isEmpty() const
 {
-    return partitionedDatasets.empty() && outputGrids.empty() && outputFields.empty();
+    return partitionedDatasets.empty() && inputGrids.empty() && inputFields.empty();
+}
+
+void StreamlineVtkm::GlobalData::resize(std::size_t newSize, std::size_t numFields)
+{
+    if (inputFields.size() < numFields)
+        inputFields.resize(numFields);
+
+    if (partitionedDatasets.size() < newSize) {
+        partitionedDatasets.resize(newSize);
+        inputGrids.resize(newSize);
+        for (auto &field: inputFields)
+            field.resize(newSize);
+    }
 }
 
 StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm)
@@ -66,9 +77,6 @@ StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::commu
         }
     }
 
-    m_printObjectInfo =
-        addIntParameter("_print_object_info", "print information on generated data objects for debug purposes", false,
-                        Parameter::Boolean);
     // ------------------------------------------------------------------------------
 
     setCurrentParameterGroup("Seed Points");
@@ -175,24 +183,6 @@ bool StreamlineVtkm::changeParameter(const Parameter *param)
     return Module::changeParameter(param);
 }
 
-ModuleStatusPtr StreamlineVtkm::prepareInputGrid(InputData &input) const
-{
-    return vtkmSetGrid(input.viskoresDataset, input.vistleGrid);
-}
-
-ModuleStatusPtr StreamlineVtkm::prepareInputField(const Port *port, InputData &input, int index) const
-{
-    auto field = input.fields[index];
-
-    if (index == 0) {
-        if (auto in = Vec<Scalar, 3>::as(field); !in) {
-            return Error("Error: Input field at port " + port->getName() + " must be a 3D vector field!");
-        }
-    }
-
-    return vtkmAddField(input.viskoresDataset, field, getFieldName(index));
-}
-
 bool StreamlineVtkm::reduce(int timestep)
 {
     const auto idx = static_cast<std::size_t>(timestep + 1);
@@ -243,10 +233,6 @@ bool StreamlineVtkm::reduce(int timestep)
     meta.setNumTimesteps(numTimesteps() > 0 ? numTimesteps() : -1);
     meta.setTimeStep(numTimesteps() > 0 ? timestep : -1);
 
-    std::lock_guard<std::mutex> lock(m_globalData.mutex);
-    m_globalData.outputGrids.clear();
-    m_globalData.outputFields.assign(m_numPorts, {});
-
     for (viskores::Id partitionIndex = 0; partitionIndex < output.GetNumberOfPartitions(); ++partitionIndex) {
         const auto &dataset = output.GetPartition(partitionIndex);
         auto outputGrid = vtkmGetGeometry(dataset);
@@ -266,7 +252,6 @@ bool StreamlineVtkm::reduce(int timestep)
             if (auto &vistleGrid = inputGrids.front())
                 outputGrid->copyAttributes(vistleGrid);
         }
-        m_globalData.outputGrids.push_back(outputGrid);
 
         for (int port = 0; port < m_numPorts; ++port) {
             if (!m_outputPorts[port]->isConnected())
@@ -278,7 +263,7 @@ bool StreamlineVtkm::reduce(int timestep)
                 field = vtkmGetField(dataset, getFieldName(0, true), DataBase::Unspecified, false);
             } else {
                 // the Streamline filter does not map the other input fields onto the generated lines,
-                // so we have to probe them from the merged input dataset, as in prepareOutputField()
+                // so we have to probe them from the merged input dataset
                 auto probe = viskores::filter::resampling::Probe();
                 probe.SetGeometry(dataset);
                 probe.SetOutputFieldName(getFieldName(port));
@@ -302,10 +287,8 @@ bool StreamlineVtkm::reduce(int timestep)
                     field->setMapping(mapping);
                 }
                 field->setGrid(outputGrid);
-                m_globalData.outputFields[port].push_back(field);
                 addObject(m_outputPorts[port], field);
             } else {
-                m_globalData.outputFields[port].push_back(nullptr);
                 addObject(m_outputPorts[port], outputGrid);
             }
         }
@@ -316,19 +299,27 @@ bool StreamlineVtkm::reduce(int timestep)
 
 bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) const
 {
-    InputData input;
+    vistle::Object::const_ptr vistleGrid;
+    std::vector<vistle::DataBase::const_ptr> fields;
 
-    auto status = readInPorts(task, input.vistleGrid, input.fields);
+    viskores::cont::DataSet viskoresDataset;
+
+    auto status = readInPorts(task, vistleGrid, fields);
     if (!checkAndNotify(status))
         return true;
 
-    assert(m_outputPorts.size() == input.fields.size());
+    assert(m_outputPorts.size() == fields.size());
 
-    auto timestep = input.vistleGrid->getTimestep();
+    auto timestep = vistleGrid->getTimestep();
 
-    if (input.fields[0]) {
-        if (timestep != input.fields[0]->getTimestep()) {
-            sendError("timestep mismatch: grid = %d, field = %d", timestep, input.fields[0]->getTimestep());
+    if (fields[0]) {
+        if (timestep != fields[0]->getTimestep()) {
+            sendError("timestep mismatch: grid = %d, field = %d", timestep, fields[0]->getTimestep());
+            return true;
+        }
+
+        if (auto in = Vec<Scalar, 3>::as(fields[0]); !in) {
+            sendError("Error: Input field at port " + m_inputPorts[0]->getName() + " must be a 3D vector field!");
             return true;
         }
     }
@@ -336,35 +327,26 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
     if (timestep < 0)
         timestep = -1;
 
-    const auto numSteps = static_cast<std::size_t>(timestep + 1);
-
-    status = prepareInputGrid(input);
+    status = vtkmSetGrid(viskoresDataset, vistleGrid);
     if (!checkAndNotify(status))
         return true;
 
-    for (std::size_t i = 0; i < input.fields.size(); ++i) {
-        if (input.fields[i]) {
-            status = prepareInputField(m_inputPorts[i], input, i);
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        if (fields[i]) {
+            status = vtkmAddField(viskoresDataset, fields[i], getFieldName(i));
             if (!checkAndNotify(status))
                 return true;
         }
     }
 
     std::lock_guard<std::mutex> lock(m_globalData.mutex);
-    if (m_globalData.inputFields.size() < input.fields.size())
-        m_globalData.inputFields.resize(input.fields.size());
+    auto numSteps = static_cast<std::size_t>(timestep + 1);
+    m_globalData.resize(numSteps + 1, fields.size());
 
-    if (m_globalData.partitionedDatasets.size() < numSteps + 1) {
-        m_globalData.partitionedDatasets.resize(numSteps + 1);
-        m_globalData.inputGrids.resize(numSteps + 1);
-        for (auto &field: m_globalData.inputFields)
-            field.resize(numSteps + 1);
-    }
-
-    m_globalData.partitionedDatasets[numSteps].AppendPartitions({input.viskoresDataset});
-    m_globalData.inputGrids[numSteps].push_back(input.vistleGrid);
-    for (std::size_t i = 0; i < input.fields.size(); ++i)
-        m_globalData.inputFields[i][numSteps].push_back(input.fields[i]);
+    m_globalData.partitionedDatasets[numSteps].AppendPartitions({viskoresDataset});
+    m_globalData.inputGrids[numSteps].push_back(vistleGrid);
+    for (std::size_t i = 0; i < fields.size(); ++i)
+        m_globalData.inputFields[i][numSteps].push_back(fields[i]);
 
     return true;
 }
@@ -401,54 +383,6 @@ std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
         filter->SetSolverRK4();
 
     return filter;
-}
-
-Object::const_ptr StreamlineVtkm::prepareOutputGrid(const InputData &input, OutputData &output) const
-{
-    auto outputGrid = vtkmGetGeometry(output.viskoresDataset);
-    if (outputGrid) {
-        updateMeta(outputGrid);
-        outputGrid->copyAttributes(input.vistleGrid);
-    }
-
-    return outputGrid;
-}
-
-DataBase::ptr StreamlineVtkm::prepareOutputField(const InputData &input, OutputData &output, int index,
-                                                 const std::string &fieldName) const
-{
-    auto probe = viskores::filter::resampling::Probe();
-    probe.SetGeometry(output.viskoresDataset);
-    probe.SetOutputFieldName(fieldName);
-
-    viskores::cont::DataSet probeOutput;
-    if (!this->tryToExecuteFilter(probe, input.viskoresDataset, probeOutput)) {
-        sendError("An error occurred while probing the filter output field " + fieldName + " to the output grid.");
-        return nullptr;
-    }
-
-    // --------------------------------------------------------------------------------
-
-    if (auto mapped = vtkmGetField(probeOutput, fieldName)) {
-        std::cerr << "mapped data: " << *mapped << std::endl;
-        updateMeta(mapped);
-
-        // the mapping of the output field might differ from the one of the input field,
-        // so lets temporarily store it and set it again after copying the attributes
-        auto mapping = mapped->mapping();
-        mapped->copyAttributes(input.fields[index]);
-        mapped->setMapping(mapping);
-
-        if (output.vistleGrid)
-            mapped->setGrid(output.vistleGrid);
-
-        return mapped;
-
-    } else {
-        sendError("An error occurred while transforming the filter output field " + fieldName + " to a Vistle object.");
-    }
-
-    return nullptr;
 }
 
 bool StreamlineVtkm::tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::DataSet &inputDataset,
