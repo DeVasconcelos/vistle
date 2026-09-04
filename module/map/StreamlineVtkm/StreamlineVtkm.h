@@ -26,7 +26,7 @@
 class StreamlineVtkm: public vistle::Module {
 public:
     struct GlobalData {
-        viskores::cont::PartitionedDataSet partitionedDataset;
+        std::vector<viskores::cont::PartitionedDataSet> partitionedDatasets;
         std::vector<vistle::Object::const_ptr> outputGrids;
         std::vector<std::vector<vistle::DataBase::ptr>> outputFields;
 
