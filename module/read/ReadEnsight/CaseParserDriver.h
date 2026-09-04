@@ -3,8 +3,10 @@
 
 #include "CaseFile.h"
 #include "CaseParser.h"
-#include <string>
+
 #include <fstream>
+#include <memory>
+#include <string>
 
 class CaseLexer;
 class DataItem;
