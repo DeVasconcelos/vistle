@@ -105,6 +105,10 @@ bool StreamlineVtkm::prepare()
         }
     }
 
+    std::lock_guard<std::mutex> lock(m_globalData.mutex);
+    if (m_globalData.partitionedDataset.GetNumberOfPartitions() > 0)
+        m_globalData.partitionedDataset = viskores::cont::PartitionedDataSet();
+
     return Module::prepare();
 }
 
