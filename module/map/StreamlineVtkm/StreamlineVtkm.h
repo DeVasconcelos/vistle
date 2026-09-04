@@ -17,7 +17,8 @@
 
 #include <viskores/cont/ArrayHandle.h>
 
-
+// TODO: continue refactoring
+// TODO: test on real data with multiple timesteps
 // TODO: narrow conversion from vistle::Float to viskores::FloatDefault (or vistle::Float to Particles)
 // TODO: is it possible to also do backwards integration (like in Tracer)?
 //       --> from what I can tell, the filter only supports forward integration as neither the filter itself
