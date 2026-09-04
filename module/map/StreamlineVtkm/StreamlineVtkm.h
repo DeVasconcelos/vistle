@@ -31,6 +31,9 @@ public:
         std::vector<std::vector<vistle::DataBase::ptr>> outputFields;
 
         std::mutex mutex;
+
+        void clear();
+        bool isEmpty() const;
     };
 
     struct InputData {

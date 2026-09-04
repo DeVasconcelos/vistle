@@ -18,6 +18,18 @@ MODULE_MAIN(StreamlineVtkm)
 DEFINE_ENUM_WITH_STRING_CONVERSIONS(IntegrationMethod, (RK4)(Euler))
 DEFINE_ENUM_WITH_STRING_CONVERSIONS(StartStyle, (Line)(Plane))
 
+void StreamlineVtkm::GlobalData::clear()
+{
+    partitionedDataset = viskores::cont::PartitionedDataSet();
+    outputGrids.clear();
+    outputFields.clear();
+}
+
+bool StreamlineVtkm::GlobalData::isEmpty() const
+{
+    return partitionedDataset.GetNumberOfPartitions() == 0 && outputGrids.empty() && outputFields.empty();
+}
+
 StreamlineVtkm::StreamlineVtkm(const std::string &name, int moduleID, mpi::communicator comm)
 : Module(name, moduleID, comm), m_numPorts(3), m_mappedDataHandling(MappedDataHandling::Require)
 {
@@ -106,8 +118,8 @@ bool StreamlineVtkm::prepare()
     }
 
     std::lock_guard<std::mutex> lock(m_globalData.mutex);
-    if (m_globalData.partitionedDataset.GetNumberOfPartitions() > 0)
-        m_globalData.partitionedDataset = viskores::cont::PartitionedDataSet();
+    if (!m_globalData.isEmpty())
+        m_globalData.clear();
 
     return Module::prepare();
 }
@@ -232,6 +244,8 @@ bool StreamlineVtkm::reduce(int timestep)
 bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) const
 {
     InputData input;
+
+    // TODO: we need to consider timesteps in global data
     std::vector<std::vector<vistle::Object::const_ptr>> grid;
     std::vector<std::vector<std::vector<vistle::DataBase::const_ptr>>> data_in;
     std::vector<viskores::cont::DataSet> viskoresDatasets;
@@ -243,39 +257,42 @@ bool StreamlineVtkm::compute(const std::shared_ptr<vistle::BlockTask> &task) con
     assert(m_outputPorts.size() == input.fields.size());
 
     auto timestep = input.vistleGrid->getTimestep();
-    if (timestep < 0 && input.fields[0])
-        timestep = input.fields[0]->getTimestep();
-    if (timestep < 0)
-        timestep = -1;
+    std::cout << "StreamlineVtkm::compute: timestep = " << timestep << std::endl;
 
-    const auto timestepIndex = static_cast<std::size_t>(timestep + 1);
-    if (grid.size() <= timestepIndex) {
-        grid.resize(timestepIndex + 1);
-        data_in.resize(m_numPorts);
-        for (auto &portData: data_in)
-            portData.resize(timestepIndex + 1);
-    } else {
-        for (auto &portData: data_in) {
-            if (portData.size() <= timestepIndex)
-                portData.resize(timestepIndex + 1);
+    if (input.fields[0]) {
+        if (timestep != input.fields[0]->getTimestep()) {
+            sendError("timestep mismatch: grid = %d, field = %d", timestep, input.fields[0]->getTimestep());
+            return true;
         }
     }
 
-    grid[timestepIndex].push_back(input.vistleGrid);
-    viskoresDatasets.emplace_back();
-    status = vtkmSetGrid(viskoresDatasets.back(), input.vistleGrid);
+    if (timestep < 0)
+        timestep = -1;
+
+    const auto numSteps = static_cast<std::size_t>(timestep + 1);
+    if (grid.size() <= numSteps) {
+        grid.resize(numSteps + 1);
+        data_in.resize(m_numPorts);
+        for (auto &field: data_in)
+            field.resize(numSteps + 1);
+    }
+
+    grid[numSteps].push_back(input.vistleGrid);
+    status = prepareInputGrid(input);
     if (!checkAndNotify(status))
         return true;
 
     for (std::size_t i = 0; i < input.fields.size(); ++i) {
-        data_in[i][timestepIndex].push_back(input.fields[i]);
-        auto field = data_in[i][timestepIndex].back();
+        data_in[i][numSteps].push_back(input.fields[i]);
+        auto field = data_in[i][numSteps].back();
         if (field) {
-            status = vtkmAddField(viskoresDatasets.back(), field, getFieldName(i));
+            status = prepareInputField(m_inputPorts[i], input, i);
             if (!checkAndNotify(status))
                 return true;
         }
     }
+
+    viskoresDatasets.push_back(input.viskoresDataset);
 
     std::lock_guard<std::mutex> lock(m_globalData.mutex);
     m_globalData.partitionedDataset.AppendPartitions(viskoresDatasets);
