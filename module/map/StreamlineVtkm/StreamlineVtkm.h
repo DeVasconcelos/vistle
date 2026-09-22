@@ -19,7 +19,6 @@
 #include <vistle/vtkm/module_status.h>
 
 // TODO: add COVER interactor
-// TODO: add module to the GPU test workflow
 // TODO: test on real data with multiple timesteps
 // TODO: narrow conversion from vistle::Float to viskores::FloatDefault (or vistle::Float to Particles)
 // TODO: is it possible to also do backwards integration (like in Tracer)?
