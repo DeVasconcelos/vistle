@@ -355,11 +355,11 @@ void StreamlineVtkm::createModuleParameters()
 {
     setCurrentParameterGroup("Seed Points");
     const Integer max_no_seeds = 300;
-    m_numberOfSeeds = addIntParameter("number_of_seeds", "number of seed points", 2);
+    m_numberOfSeeds = addIntParameter("no_startp", "number of seed points", 2);
     setParameterRange(m_numberOfSeeds, (Integer)1, max_no_seeds);
 
     m_startStyle =
-        addIntParameter("start_style", "initial particle position configuration", StartStyle::Line, Parameter::Choice);
+        addIntParameter("startStyle", "initial particle position configuration", StartStyle::Line, Parameter::Choice);
     V_ENUM_SET_CHOICES_SCOPE(m_startStyle, StartStyle, );
 
     m_startPoint1 = addVectorParameter("startpoint1", "1st initial point", ParamVector(0, 0.2, 0));

@@ -18,7 +18,6 @@
 #include <vistle/util/enum.h>
 #include <vistle/vtkm/module_status.h>
 
-// TODO: add COVER interactor
 // TODO: test on real data with multiple timesteps
 // TODO: narrow conversion from vistle::Float to viskores::FloatDefault (or vistle::Float to Particles)
 // TODO: is it possible to also do backwards integration (like in Tracer)?
