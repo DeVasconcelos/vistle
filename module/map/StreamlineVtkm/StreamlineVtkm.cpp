@@ -282,18 +282,25 @@ ModuleStatusPtr StreamlineVtkm::transformInputToViskores(const Object::const_ptr
     return Success();
 }
 
+namespace {
+template<typename S>
+viskores::Vec3f make_Vec3f(const vistle::ParameterVector<S> &v)
+{
+    typedef viskores::FloatDefault F;
+    return viskores::Vec3f{static_cast<F>(v[0]), static_cast<F>(v[1]), static_cast<F>(v[2])};
+}
+} // namespace
+
 viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray() const
 {
-    viskores::Vec3f startpoint1{m_startPoint1->getValue()[0], m_startPoint1->getValue()[1],
-                                m_startPoint1->getValue()[2]};
-    viskores::Vec3f startpoint2{m_startPoint2->getValue()[0], m_startPoint2->getValue()[1],
-                                m_startPoint2->getValue()[2]};
+    viskores::Vec3f startpoint1 = make_Vec3f(m_startPoint1->getValue());
+    viskores::Vec3f startpoint2 = make_Vec3f(m_startPoint2->getValue());
 
     if (m_startStyle->getValue() == StartStyle::Line) {
         return generateSeedsOnLine(m_numberOfSeeds->getValue(), startpoint1, startpoint2);
 
     } else {
-        viskores::Vec3f direction{m_direction->getValue()[0], m_direction->getValue()[1], m_direction->getValue()[2]};
+        viskores::Vec3f direction = make_Vec3f(m_direction->getValue());
         return generateSeedsOnPlane(m_numberOfSeeds->getValue(), startpoint1, startpoint2, direction);
     }
 }
