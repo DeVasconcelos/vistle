@@ -1,10 +1,16 @@
+#include <map>
+
+#include <viskores/cont/Algorithm.h>
+#include <viskores/cont/ArrayHandleCast.h>
 #include <viskores/cont/EnvironmentTracker.h>
-#include <viskores/cont/MergePartitionedDataSet.h>
+#include <viskores/cont/Invoker.h>
+#include <viskores/filter/FieldSelection.h>
 #include <viskores/filter/flow/Streamline.h>
 #include <viskores/filter/resampling/Probe.h>
 #include <viskores/thirdparty/diy/diy.h>
 #include <viskores/thirdparty/diy/mpi-cast.h>
 #include <viskores/VectorAnalysis.h>
+#include <viskores/worklet/WorkletMapField.h>
 
 #include <vistle/util/enum.h>
 #include <vistle/vtkm/convert.h>
@@ -152,12 +158,6 @@ bool StreamlineVtkm::reduce(int timestep)
     if (!this->tryToExecuteFilter(*streamlineFilter, inputPartitionedDataset, output))
         return true;
 
-    // the Streamline filter can drop input partitions that never received a particle and does not
-    // otherwise report which input partition an output partition came from, so the output partitions
-    // cannot be matched to the input one. For this reason, we have to merge all blocks of this timestep
-    // into a single dataset to probe fields from.
-    auto mergedInputDataset = viskores::cont::MergePartitionedDataSet(inputPartitionedDataset);
-
     for (viskores::Id partitionIndex = 0; partitionIndex < output.GetNumberOfPartitions(); partitionIndex++) {
         const auto &dataset = output.GetPartition(partitionIndex);
         auto outputGrid = vtkmGetGeometry(dataset);
@@ -169,24 +169,27 @@ bool StreamlineVtkm::reduce(int timestep)
         outputGrid->setMeta(getMetaForOutput(timestep));
         updateMeta(outputGrid);
         // attributes (e.g. species name, color map range) are the same on every block, so let's just
-        // use the first one (since we can't match the input to the output partitions)
+        // use the first one (the Streamline filter does not tell us which input partition a streamline came from)
         if (!inputGrids.empty() && inputGrids.front())
             outputGrid->copyAttributes(inputGrids.front());
+
+        // the Streamline filter does not map any input fields onto the generated streamlines, so we
+        // probe them block by block from the input partitions
+        auto probedFields = probeInputBlocks(dataset, inputPartitionedDataset);
 
         for (int port = 0; port < m_numPorts; port++) {
             if (!m_outputPorts[port]->isConnected())
                 continue;
 
-            // the Streamline filter does not map any input fields onto the generated streamlines,
-            // so we have to probe them from the (merged) input dataset with the Probe filter
-            auto probeFilter = viskores::filter::resampling::Probe();
-            probeFilter.SetGeometry(dataset);
-            probeFilter.SetOutputFieldName(getFieldName(port));
-
             DataBase::ptr field;
-            viskores::cont::DataSet probeOutput;
-            if (this->tryToExecuteFilter(probeFilter, mergedInputDataset, probeOutput))
+            auto it = probedFields.find(getFieldName(port));
+            if (it != probedFields.end()) {
+                viskores::cont::DataSet probeOutput;
+                probeOutput.AddCoordinateSystem(dataset.GetCoordinateSystem());
+                probeOutput.SetCellSet(dataset.GetCellSet());
+                probeOutput.AddPointField(it->first, it->second);
                 field = vtkmGetField(probeOutput, getFieldName(port));
+            }
 
             if (field) {
                 field->setMeta(getMetaForOutput(timestep));
@@ -210,6 +213,130 @@ bool StreamlineVtkm::reduce(int timestep)
     }
 
     return true;
+}
+
+namespace {
+// Copies values from src to dst at all points that are hidden (i.e., not found) in dst, but visible in src.
+struct MergeVisibleWorklet: viskores::worklet::WorkletMapField {
+    using ControlSignature = void(FieldIn srcHidden, FieldIn dstHidden, FieldIn src, FieldInOut dst);
+    using ExecutionSignature = void(_1, _2, _3, _4);
+
+    template<typename S, typename D>
+    VISKORES_EXEC void operator()(viskores::UInt8 srcHidden, viskores::UInt8 dstHidden, const S &src, D &dst) const
+    {
+        if (dstHidden && !srcHidden)
+            dst = src;
+    }
+};
+
+struct MergeHiddenWorklet: viskores::worklet::WorkletMapField {
+    using ControlSignature = void(FieldIn srcHidden, FieldInOut dstHidden);
+    using ExecutionSignature = void(_1, _2);
+
+    VISKORES_EXEC void operator()(viskores::UInt8 srcHidden, viskores::UInt8 &dstHidden) const
+    {
+        dstHidden = dstHidden && srcHidden;
+    }
+};
+
+bool mergeVisibleValues(const viskores::cont::UnknownArrayHandle &dst, const viskores::cont::UnknownArrayHandle &src,
+                        const viskores::cont::ArrayHandle<viskores::UInt8> &dstHidden,
+                        const viskores::cont::ArrayHandle<viskores::UInt8> &srcHidden)
+{
+    if (dst.GetNumberOfValues() != src.GetNumberOfValues() ||
+        dst.GetNumberOfComponentsFlat() != src.GetNumberOfComponentsFlat() ||
+        dst.GetNumberOfValues() != dstHidden.GetNumberOfValues() ||
+        dst.GetNumberOfValues() != srcHidden.GetNumberOfValues())
+        return false;
+
+    const viskores::IdComponent numComponents = dst.GetNumberOfComponentsFlat();
+    viskores::cont::Invoker invoke;
+
+    bool called = false;
+    auto tryType = [&](auto t) {
+        using T = std::decay_t<decltype(t)>;
+        if (called || !dst.IsBaseComponentType<T>() || !src.IsBaseComponentType<T>())
+            return;
+        called = true;
+        for (viskores::IdComponent c = 0; c < numComponents; ++c) {
+            // extracting without copying: the stride array aliases dst's buffer, so it is updated in place
+            invoke(MergeVisibleWorklet{}, srcHidden, dstHidden, src.ExtractComponent<T>(c),
+                   dst.ExtractComponent<T>(c, viskores::CopyFlag::Off));
+        }
+    };
+    viskores::ListForEach(tryType, viskores::TypeListScalarAll{});
+    return called;
+}
+} // namespace
+
+std::map<std::string, viskores::cont::UnknownArrayHandle>
+StreamlineVtkm::probeInputBlocks(const viskores::cont::DataSet &geometry,
+                                 const viskores::cont::PartitionedDataSet &input) const
+{
+    std::map<std::string, viskores::cont::UnknownArrayHandle> merged;
+
+    // only probe the fields that are actually needed
+    std::vector<std::string> names;
+    for (int port = 0; port < m_numPorts; ++port) {
+        if (m_outputPorts[port]->isConnected())
+            names.push_back(getFieldName(port));
+    }
+    if (names.empty())
+        return merged;
+
+    const auto geometryBounds = geometry.GetCoordinateSystem().GetBounds();
+    const viskores::Id numPoints = geometry.GetCoordinateSystem().GetNumberOfPoints();
+    viskores::cont::Invoker invoke;
+    viskores::cont::ArrayHandle<viskores::UInt8> hidden;
+    bool first = true;
+
+    for (viskores::Id block = 0; block < input.GetNumberOfPartitions(); block++) {
+        const auto &blockData = input.GetPartition(block);
+        // a block that does not overlap the streamlines cannot contribute any values
+        if (!blockData.GetCoordinateSystem().GetBounds().Intersection(geometryBounds).IsNonEmpty())
+            continue;
+
+        auto probeFilter = viskores::filter::resampling::Probe();
+        probeFilter.SetGeometry(geometry);
+        viskores::filter::FieldSelection selection(viskores::filter::FieldSelection::Mode::None);
+        for (const auto &name: names)
+            selection.AddField(name, viskores::cont::Field::Association::Points);
+        probeFilter.SetFieldsToPass(selection);
+
+        viskores::cont::DataSet probeOutput;
+        if (!this->tryToExecuteFilter(probeFilter, blockData, probeOutput))
+            continue;
+
+        // shares the buffer with probeOutput instead of copying it
+        viskores::cont::ArrayHandle<viskores::UInt8> blockHidden;
+        probeOutput.GetField("HIDDEN", viskores::cont::Field::Association::Points).GetData().AsArrayHandle(blockHidden);
+
+        for (const auto &name: names) {
+            if (!probeOutput.HasField(name, viskores::cont::Field::Association::Points))
+                continue;
+            auto array = probeOutput.GetField(name, viskores::cont::Field::Association::Points).GetData();
+            auto it = merged.find(name);
+            if (it == merged.end())
+                merged.emplace(name, array);
+            else if (!first)
+                mergeVisibleValues(it->second, array, hidden, blockHidden);
+        }
+
+        if (first) {
+            hidden = blockHidden;
+            first = false;
+        } else {
+            invoke(MergeHiddenWorklet{}, blockHidden, hidden);
+        }
+
+        // stop as soon as every streamline point has been found
+        auto numHidden = viskores::cont::Algorithm::Reduce(viskores::cont::make_ArrayHandleCast<viskores::Id>(hidden),
+                                                           viskores::Id(0));
+        if (numHidden == 0 && numPoints > 0)
+            break;
+    }
+
+    return merged;
 }
 
 bool StreamlineVtkm::changeParameter(const Parameter *param)

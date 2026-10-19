@@ -2,6 +2,7 @@
 #define VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H
 
 #include <cstddef>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -9,6 +10,7 @@
 #include <viskores/cont/ArrayHandle.h>
 #include <viskores/cont/DataSet.h>
 #include <viskores/cont/PartitionedDataSet.h>
+#include <viskores/cont/UnknownArrayHandle.h>
 #include <viskores/filter/Filter.h>
 #include <viskores/Particle.h>
 
@@ -86,6 +88,9 @@ private:
 
     bool tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::PartitionedDataSet &inputDataset,
                             viskores::cont::PartitionedDataSet &outputDataset) const;
+
+    std::map<std::string, viskores::cont::UnknownArrayHandle>
+    probeInputBlocks(const viskores::cont::DataSet &geometry, const viskores::cont::PartitionedDataSet &input) const;
 
     bool checkAndNotify(const ModuleStatusPtr &status) const;
 
