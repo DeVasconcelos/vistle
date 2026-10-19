@@ -1,7 +1,7 @@
+#include <map>
+
 #include <viskores/cont/EnvironmentTracker.h>
-#include <viskores/cont/MergePartitionedDataSet.h>
-#include <viskores/filter/flow/Streamline.h>
-#include <viskores/filter/resampling/Probe.h>
+#include <viskores/filter/FieldSelection.h>
 #include <viskores/thirdparty/diy/diy.h>
 #include <viskores/thirdparty/diy/mpi-cast.h>
 #include <viskores/VectorAnalysis.h>
@@ -11,6 +11,7 @@
 #include <vistle/vtkm/vtkm_module_utils.h>
 
 #include "worklet/GenerateSeeds.h"
+#include "worklet/SampledStreamline.h"
 #include "StreamlineVtkm.h"
 
 using namespace vistle;
@@ -152,12 +153,6 @@ bool StreamlineVtkm::reduce(int timestep)
     if (!this->tryToExecuteFilter(*streamlineFilter, inputPartitionedDataset, output))
         return true;
 
-    // the Streamline filter can drop input partitions that never received a particle and does not
-    // otherwise report which input partition an output partition came from, so the output partitions
-    // cannot be matched to the input one. For this reason, we have to merge all blocks of this timestep
-    // into a single dataset to probe fields from.
-    auto mergedInputDataset = viskores::cont::MergePartitionedDataSet(inputPartitionedDataset);
-
     for (viskores::Id partitionIndex = 0; partitionIndex < output.GetNumberOfPartitions(); partitionIndex++) {
         const auto &dataset = output.GetPartition(partitionIndex);
         auto outputGrid = vtkmGetGeometry(dataset);
@@ -169,24 +164,18 @@ bool StreamlineVtkm::reduce(int timestep)
         outputGrid->setMeta(getMetaForOutput(timestep));
         updateMeta(outputGrid);
         // attributes (e.g. species name, color map range) are the same on every block, so let's just
-        // use the first one (since we can't match the input to the output partitions)
+        // use the first one (the Streamline filter does not tell us which input partition a streamline came from)
         if (!inputGrids.empty() && inputGrids.front())
             outputGrid->copyAttributes(inputGrids.front());
 
+        // the filter samples the input fields on the input partition each streamline piece was traced in
         for (int port = 0; port < m_numPorts; port++) {
             if (!m_outputPorts[port]->isConnected())
                 continue;
 
-            // the Streamline filter does not map any input fields onto the generated streamlines,
-            // so we have to probe them from the (merged) input dataset with the Probe filter
-            auto probeFilter = viskores::filter::resampling::Probe();
-            probeFilter.SetGeometry(dataset);
-            probeFilter.SetOutputFieldName(getFieldName(port));
-
             DataBase::ptr field;
-            viskores::cont::DataSet probeOutput;
-            if (this->tryToExecuteFilter(probeFilter, mergedInputDataset, probeOutput))
-                field = vtkmGetField(probeOutput, getFieldName(port));
+            if (dataset.HasPointField(getFieldName(port)))
+                field = vtkmGetField(dataset, getFieldName(port));
 
             if (field) {
                 field->setMeta(getMetaForOutput(timestep));
@@ -315,7 +304,15 @@ viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray(
 
 std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
 {
-    auto filter = std::make_unique<viskores::filter::flow::Streamline>();
+    auto filter = std::make_unique<vistle::SampledStreamline>();
+
+    // sample the data of every connected output port along the streamlines
+    std::vector<std::string> sampledFields;
+    for (int port = 0; port < m_numPorts; ++port) {
+        if (m_outputPorts[port]->isConnected())
+            sampledFields.push_back(getFieldName(port));
+    }
+    filter->SetSampledFields(sampledFields);
 
     filter->SetStepSize(m_stepSize->getValue());
     filter->SetNumberOfSteps(m_numberOfSteps->getValue());
