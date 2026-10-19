@@ -1,16 +1,31 @@
+#include <algorithm>
+#include <cmath>
+#include <type_traits>
+
+#include <viskores/TypeList.h>
+#include <viskores/cont/Algorithm.h>
+#include <viskores/cont/ArrayCopy.h>
+#include <viskores/cont/ArrayHandleIndex.h>
+#include <viskores/cont/ArrayHandlePermutation.h>
+#include <viskores/cont/ArrayHandleStride.h>
+#include <viskores/cont/CoordinateSystem.h>
 #include <viskores/cont/EnvironmentTracker.h>
-#include <viskores/cont/MergePartitionedDataSet.h>
-#include <viskores/filter/flow/Streamline.h>
+#include <viskores/cont/Invoker.h>
+#include <viskores/cont/UnknownArrayHandle.h>
+#include <viskores/filter/FieldSelection.h>
+#include <viskores/filter/entity_extraction/Threshold.h>
 #include <viskores/filter/resampling/Probe.h>
 #include <viskores/thirdparty/diy/diy.h>
 #include <viskores/thirdparty/diy/mpi-cast.h>
 #include <viskores/VectorAnalysis.h>
+#include <viskores/worklet/WorkletMapField.h>
 
 #include <vistle/util/enum.h>
 #include <vistle/vtkm/convert.h>
 #include <vistle/vtkm/vtkm_module_utils.h>
 
 #include "worklet/GenerateSeeds.h"
+#include "SampledStreamline.h"
 #include "StreamlineVtkm.h"
 
 using namespace vistle;
@@ -152,14 +167,10 @@ bool StreamlineVtkm::reduce(int timestep)
     if (!this->tryToExecuteFilter(*streamlineFilter, inputPartitionedDataset, output))
         return true;
 
-    // the Streamline filter can drop input partitions that never received a particle and does not
-    // otherwise report which input partition an output partition came from, so the output partitions
-    // cannot be matched to the input one. For this reason, we have to merge all blocks of this timestep
-    // into a single dataset to probe fields from.
-    auto mergedInputDataset = viskores::cont::MergePartitionedDataSet(inputPartitionedDataset);
-
     for (viskores::Id partitionIndex = 0; partitionIndex < output.GetNumberOfPartitions(); partitionIndex++) {
-        const auto &dataset = output.GetPartition(partitionIndex);
+        auto dataset = output.GetPartition(partitionIndex);
+        resolveMissingValues(dataset, inputPartitionedDataset);
+
         auto outputGrid = vtkmGetGeometry(dataset);
         if (!outputGrid) {
             sendError("Could not convert StreamlineVtkm output geometry to a Vistle object.");
@@ -169,24 +180,18 @@ bool StreamlineVtkm::reduce(int timestep)
         outputGrid->setMeta(getMetaForOutput(timestep));
         updateMeta(outputGrid);
         // attributes (e.g. species name, color map range) are the same on every block, so let's just
-        // use the first one (since we can't match the input to the output partitions)
+        // use the first one (the Streamline filter does not tell us which input partition a streamline came from)
         if (!inputGrids.empty() && inputGrids.front())
             outputGrid->copyAttributes(inputGrids.front());
 
+        // the filter samples the input fields on the input partition each streamline piece was traced in
         for (int port = 0; port < m_numPorts; port++) {
             if (!m_outputPorts[port]->isConnected())
                 continue;
 
-            // the Streamline filter does not map any input fields onto the generated streamlines,
-            // so we have to probe them from the (merged) input dataset with the Probe filter
-            auto probeFilter = viskores::filter::resampling::Probe();
-            probeFilter.SetGeometry(dataset);
-            probeFilter.SetOutputFieldName(getFieldName(port));
-
             DataBase::ptr field;
-            viskores::cont::DataSet probeOutput;
-            if (this->tryToExecuteFilter(probeFilter, mergedInputDataset, probeOutput))
-                field = vtkmGetField(probeOutput, getFieldName(port));
+            if (dataset.HasPointField(getFieldName(port)))
+                field = vtkmGetField(dataset, getFieldName(port));
 
             if (field) {
                 field->setMeta(getMetaForOutput(timestep));
@@ -315,7 +320,15 @@ viskores::cont::ArrayHandle<viskores::Particle> StreamlineVtkm::createSeedArray(
 
 std::unique_ptr<viskores::filter::Filter> StreamlineVtkm::setUpFilter() const
 {
-    auto filter = std::make_unique<viskores::filter::flow::Streamline>();
+    auto filter = std::make_unique<vistle::SampledStreamline>();
+
+    // sample the data of every connected output port along the streamlines
+    std::vector<std::string> sampledFields;
+    for (int port = 0; port < m_numPorts; ++port) {
+        if (m_outputPorts[port]->isConnected())
+            sampledFields.push_back(getFieldName(port));
+    }
+    filter->SetSampledFields(sampledFields);
 
     filter->SetStepSize(m_stepSize->getValue());
     filter->SetNumberOfSteps(m_numberOfSteps->getValue());
@@ -346,6 +359,191 @@ bool StreamlineVtkm::tryToExecuteFilter(viskores::filter::Filter &filter,
                                         viskores::cont::PartitionedDataSet &outputDataset) const
 {
     return vistle::vtkm::tryToExecuteFilter(*this, filter, inputDataset, outputDataset);
+}
+
+namespace {
+
+// Calls f(T) with the floating point base component type of array and returns true, or returns false if array
+// does not store floating point values (missing values are only marked for those, as NaN)
+template<typename F>
+bool withFloatType(const viskores::cont::UnknownArrayHandle &array, F &&f)
+{
+    if (array.IsBaseComponentType<viskores::Float32>()) {
+        f(viskores::Float32());
+        return true;
+    }
+    if (array.IsBaseComponentType<viskores::Float64>()) {
+        f(viskores::Float64());
+        return true;
+    }
+    return false;
+}
+
+struct MergeMissingWorklet: viskores::worklet::WorkletMapField {
+    using ControlSignature = void(FieldIn index, FieldIn srcHidden, FieldIn src, WholeArrayInOut dst);
+    using ExecutionSignature = void(_1, _2, _3, _4);
+
+    template<typename S, typename DstPortal>
+    VISKORES_EXEC void operator()(viskores::Id index, viskores::UInt8 srcHidden, const S &src, DstPortal &dst) const
+    {
+        using D = typename DstPortal::ValueType;
+        if (!srcHidden && viskores::IsNan(dst.Get(index)))
+            dst.Set(index, static_cast<D>(src));
+    }
+};
+
+// Copies the i-th value of src to dst[indices[i]] if that dst value is NaN (i.e., could not be sampled while
+// tracing) and src is visible. Returns false if the arrays are incompatible.
+bool mergeMissingValues(const viskores::cont::UnknownArrayHandle &dst, const viskores::cont::UnknownArrayHandle &src,
+                        const viskores::cont::ArrayHandle<viskores::Id> &indices,
+                        const viskores::cont::ArrayHandle<viskores::UInt8> &srcHidden)
+{
+    const viskores::IdComponent numComponents = dst.GetNumberOfComponentsFlat();
+    const viskores::Id n = indices.GetNumberOfValues();
+    if (src.GetNumberOfValues() != n || srcHidden.GetNumberOfValues() != n ||
+        src.GetNumberOfComponentsFlat() != numComponents)
+        return false;
+
+    viskores::cont::Invoker invoke;
+    bool called = false;
+    withFloatType(dst, [&](auto d) {
+        using D = decltype(d);
+        auto tryType = [&](auto t) {
+            using T = std::decay_t<decltype(t)>;
+            if (called || !src.IsBaseComponentType<T>())
+                return;
+            called = true;
+            for (viskores::IdComponent c = 0; c < numComponents; ++c) {
+                // extracting without copying: the stride array aliases dst's buffer, so it is updated in place
+                invoke(MergeMissingWorklet{}, indices, srcHidden, src.ExtractComponent<T>(c),
+                       dst.ExtractComponent<D>(c, viskores::CopyFlag::Off));
+            }
+        };
+        viskores::ListForEach(tryType, viskores::TypeListScalarAll{});
+    });
+    return called;
+}
+
+struct IsMissingWorklet: viskores::worklet::WorkletMapField {
+    using ControlSignature = void(FieldIn value, FieldOut missing);
+    using ExecutionSignature = _2(_1);
+
+    template<typename T>
+    VISKORES_EXEC viskores::Id operator()(const T &value) const
+    {
+        return viskores::IsNan(value) ? 1 : 0;
+    }
+};
+
+bool hasMissingValues(const viskores::cont::UnknownArrayHandle &array)
+{
+    viskores::cont::Invoker invoke;
+    bool missing = false;
+    withFloatType(array, [&](auto d) {
+        using D = decltype(d);
+        for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat() && !missing; c++) {
+            viskores::cont::ArrayHandle<viskores::Id> isMissing;
+            invoke(IsMissingWorklet{}, array.ExtractComponent<D>(c), isMissing);
+            missing = viskores::cont::Algorithm::Reduce(isMissing, viskores::Id(0)) > 0;
+            if (missing)
+                break;
+        }
+    });
+    return missing;
+}
+
+struct MarkMissingWorklet: viskores::worklet::WorkletMapField {
+    using ControlSignature = void(FieldIn value, FieldInOut flag);
+    using ExecutionSignature = void(_1, _2);
+
+    template<typename T>
+    VISKORES_EXEC void operator()(const T &value, viskores::UInt8 &flag) const
+    {
+        if (viskores::IsNan(value))
+            flag = 1;
+    }
+};
+
+// Collects the indices of all points where any of the given point fields is NaN, and their coordinates
+void collectMissingPoints(const viskores::cont::DataSet &streamlines, const std::vector<std::string> &names,
+                          viskores::cont::ArrayHandle<viskores::Id> &indices,
+                          viskores::cont::ArrayHandle<viskores::Vec3f> &points)
+{
+    const viskores::Id n = streamlines.GetNumberOfPoints();
+    viskores::cont::Invoker invoke;
+    viskores::cont::ArrayHandle<viskores::UInt8> flags;
+    flags.AllocateAndFill(n, 0);
+    for (const auto &name: names) {
+        const auto array = streamlines.GetPointField(name).GetData();
+        withFloatType(array, [&](auto d) {
+            using D = decltype(d);
+            for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat(); c++)
+                invoke(MarkMissingWorklet{}, array.ExtractComponent<D>(c), flags);
+        });
+    }
+
+    // collect the indices of the points that are missing (i.e., NaN) ...
+    viskores::cont::Algorithm::CopyIf(viskores::cont::make_ArrayHandleIndex(n), flags, indices);
+    // ... and store the coordinates of those points in a separate array
+    viskores::cont::ArrayCopy(
+        viskores::cont::make_ArrayHandlePermutation(indices, streamlines.GetCoordinateSystem().GetDataAsMultiplexer()),
+        points);
+}
+
+} // namespace
+
+void StreamlineVtkm::resolveMissingValues(const viskores::cont::DataSet &streamlines,
+                                          const viskores::cont::PartitionedDataSet &input) const
+{
+    // the filter samples each point on the block that traced it, which fails at block boundaries: probe only
+    // those points on the input blocks instead
+    std::vector<std::string> names;
+    for (auto i = 0; i < streamlines.GetNumberOfFields(); i++) {
+        if (hasMissingValues(streamlines.GetField(i).GetData()))
+            names.push_back(streamlines.GetField(i).GetName());
+    }
+
+    if (names.empty())
+        return;
+
+    viskores::cont::ArrayHandle<viskores::Id> indices;
+    viskores::cont::ArrayHandle<viskores::Vec3f> points;
+    viskores::Bounds pointBounds;
+    bool dirty = true;
+
+    for (viskores::Id block = 0; block < input.GetNumberOfPartitions(); block++) {
+        if (dirty) {
+            collectMissingPoints(streamlines, names, indices, points);
+            // points that lie in no input block stay NaN
+            if (indices.GetNumberOfValues() == 0)
+                return;
+            pointBounds = viskores::cont::CoordinateSystem("coordinates", points).GetBounds();
+            dirty = false;
+        }
+
+        const auto &blockData = input.GetPartition(block);
+        if (!blockData.GetCoordinateSystem().GetBounds().Intersection(pointBounds).IsNonEmpty())
+            continue;
+
+        auto probeFilter = viskores::filter::resampling::Probe();
+        probeFilter.SetGeometry(points);
+
+        viskores::cont::DataSet probeOutput;
+        if (!this->tryToExecuteFilter(probeFilter, blockData, probeOutput))
+            continue;
+
+        viskores::cont::ArrayHandle<viskores::UInt8> blockHidden;
+        probeOutput.GetField("HIDDEN", viskores::cont::Field::Association::Points).GetData().AsArrayHandle(blockHidden);
+
+        for (const auto &name: names) {
+            if (!probeOutput.HasField(name, viskores::cont::Field::Association::Points))
+                continue;
+            mergeMissingValues(streamlines.GetPointField(name).GetData(),
+                               probeOutput.GetField(name, viskores::cont::Field::Association::Points).GetData(),
+                               indices, blockHidden);
+        }
+        dirty = true;
+    }
 }
 
 bool StreamlineVtkm::checkAndNotify(const ModuleStatusPtr &status) const
