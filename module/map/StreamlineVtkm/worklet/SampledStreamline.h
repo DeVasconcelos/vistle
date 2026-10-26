@@ -20,7 +20,8 @@
 /*
     A variant of viskores::filter::flow::Streamline that samples data fields in its particle
     analysis hooks while accepted integration steps are recorded. Each output partition carries
-    values evaluated on the input partition that traced its streamline pieces.
+    values evaluated on the input partition that traced its streamline pieces. Points that could not
+    be evaluated there (e.g. at partition boundaries) are NaN.
 
     Sampled fields are evaluated as viskores::Vec3f internally (missing components are padded with
     zeros, components beyond the third are dropped). Scalar fields are returned as scalars
@@ -56,7 +57,7 @@ public:
                                const viskores::Particle &newParticle);
 
 private:
-    VISKORES_EXEC void Sample(viskores::Id loc, const viskores::Vec3f &position, viskores::Id previousLoc);
+    VISKORES_EXEC void Sample(viskores::Id loc, const viskores::Vec3f &position);
 
     BaseExec m_base;
     viskores::IdComponent m_numFields;

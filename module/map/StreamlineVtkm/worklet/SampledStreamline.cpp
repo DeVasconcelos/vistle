@@ -163,7 +163,7 @@ VISKORES_EXEC void SampledStreamlineAnalysisExec::PreStepAnalyze(viskores::Id in
         const viskores::Id loc = index * m_maxSteps;
         m_lengths.Set(index, 1);
         m_validity.Set(loc, 1);
-        Sample(loc, particle.GetPosition(), -1);
+        Sample(loc, particle.GetPosition());
     }
 }
 
@@ -175,20 +175,18 @@ VISKORES_EXEC void SampledStreamlineAnalysisExec::Analyze(viskores::Id index, co
     const viskores::Id loc = index * m_maxSteps + length;
     m_lengths.Set(index, length + 1);
     m_validity.Set(loc, 1);
-    Sample(loc, newParticle.GetPosition(), loc - 1);
+    Sample(loc, newParticle.GetPosition());
 }
 
-VISKORES_EXEC void SampledStreamlineAnalysisExec::Sample(viskores::Id loc, const viskores::Vec3f &position,
-                                                         viskores::Id previousLoc)
+VISKORES_EXEC void SampledStreamlineAnalysisExec::Sample(viskores::Id loc, const viskores::Vec3f &position)
 {
     for (viskores::Id field = 0; field < m_numFields; ++field) {
         viskores::VecVariable<viskores::Vec3f, 2> value;
         const auto status = m_evaluators[field].Evaluate(position, viskores::FloatDefault(0), value);
         if (status.CheckOk())
             m_values[field].Set(loc, value[0]);
-        // Boundary points just outside this partition have no local interpolant.
-        else if (previousLoc >= 0)
-            m_values[field].Set(loc, m_values[field].Get(previousLoc));
+        // Points on or just outside the partition boundary have no local interpolant and stay NaN,
+        // so that they can be resolved against the other partitions later.
     }
 }
 

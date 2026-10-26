@@ -89,6 +89,9 @@ private:
     bool tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::PartitionedDataSet &inputDataset,
                             viskores::cont::PartitionedDataSet &outputDataset) const;
 
+    void resolveMissingValues(const viskores::cont::DataSet &streamlines,
+                              const viskores::cont::PartitionedDataSet &input) const;
+
     bool checkAndNotify(const ModuleStatusPtr &status) const;
 
     void createModulePorts();

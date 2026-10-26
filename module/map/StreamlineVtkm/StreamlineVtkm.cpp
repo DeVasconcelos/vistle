@@ -1,7 +1,15 @@
 #include <map>
 
+#include <algorithm>
+#include <cmath>
+#include <type_traits>
+#include <vector>
+
+#include <viskores/TypeList.h>
+#include <viskores/cont/ArrayHandleStride.h>
 #include <viskores/cont/EnvironmentTracker.h>
 #include <viskores/filter/FieldSelection.h>
+#include <viskores/filter/resampling/Probe.h>
 #include <viskores/thirdparty/diy/diy.h>
 #include <viskores/thirdparty/diy/mpi-cast.h>
 #include <viskores/VectorAnalysis.h>
@@ -155,6 +163,7 @@ bool StreamlineVtkm::reduce(int timestep)
 
     for (viskores::Id partitionIndex = 0; partitionIndex < output.GetNumberOfPartitions(); partitionIndex++) {
         const auto &dataset = output.GetPartition(partitionIndex);
+        resolveMissingValues(dataset, inputPartitionedDataset);
         auto outputGrid = vtkmGetGeometry(dataset);
         if (!outputGrid) {
             sendError("Could not convert StreamlineVtkm output geometry to a Vistle object.");
@@ -199,6 +208,130 @@ bool StreamlineVtkm::reduce(int timestep)
     }
 
     return true;
+}
+
+namespace {
+
+// Copies the values of src to dst at all points where dst is NaN (i.e., could not be sampled while tracing) and
+// where src is visible. Returns false if the arrays are incompatible.
+bool mergeMissingValues(const viskores::cont::UnknownArrayHandle &dst, const viskores::cont::UnknownArrayHandle &src,
+                        const viskores::cont::ArrayHandle<viskores::UInt8> &srcHidden)
+{
+    const viskores::Id n = dst.GetNumberOfValues();
+    const viskores::IdComponent numComponents = dst.GetNumberOfComponentsFlat();
+    if (src.GetNumberOfValues() != n || srcHidden.GetNumberOfValues() != n ||
+        src.GetNumberOfComponentsFlat() != numComponents || !dst.IsBaseComponentType<viskores::FloatDefault>())
+        return false;
+
+    auto hidden = srcHidden.ReadPortal();
+    bool called = false;
+    auto tryType = [&](auto t) {
+        using T = std::decay_t<decltype(t)>;
+        if (called || !src.IsBaseComponentType<T>())
+            return;
+        called = true;
+        for (viskores::IdComponent c = 0; c < numComponents; ++c) {
+            // extracting without copying: the stride array aliases dst's buffer, so it is updated in place
+            auto out = dst.ExtractComponent<viskores::FloatDefault>(c, viskores::CopyFlag::Off).WritePortal();
+            auto in = src.ExtractComponent<T>(c).ReadPortal();
+            for (viskores::Id i = 0; i < n; ++i) {
+                if (std::isnan(out.Get(i)) && !hidden.Get(i))
+                    out.Set(i, static_cast<viskores::FloatDefault>(in.Get(i)));
+            }
+        }
+    };
+    viskores::ListForEach(tryType, viskores::TypeListScalarAll{});
+    return called;
+}
+
+bool hasMissingValues(const viskores::cont::UnknownArrayHandle &array)
+{
+    if (!array.IsBaseComponentType<viskores::FloatDefault>())
+        return false;
+    for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat(); ++c) {
+        auto portal = array.ExtractComponent<viskores::FloatDefault>(c).ReadPortal();
+        for (viskores::Id i = 0; i < portal.GetNumberOfValues(); ++i) {
+            if (std::isnan(portal.Get(i)))
+                return true;
+        }
+    }
+    return false;
+}
+
+// Points that are not inside any input block (e.g. the last step beyond the domain) repeat the previous value.
+void fillRemainingMissingValues(const viskores::cont::UnknownArrayHandle &array)
+{
+    if (!array.IsBaseComponentType<viskores::FloatDefault>())
+        return;
+    const viskores::IdComponent numComponents = array.GetNumberOfComponentsFlat();
+    std::vector<viskores::cont::ArrayHandleStride<viskores::FloatDefault>::WritePortalType> portals;
+    for (viskores::IdComponent c = 0; c < numComponents; ++c)
+        portals.push_back(array.ExtractComponent<viskores::FloatDefault>(c, viskores::CopyFlag::Off).WritePortal());
+    for (viskores::Id i = 0; i < array.GetNumberOfValues(); ++i) {
+        for (auto &portal: portals) {
+            if (std::isnan(portal.Get(i)))
+                portal.Set(i, i > 0 ? portal.Get(i - 1) : viskores::FloatDefault(0));
+        }
+    }
+}
+} // namespace
+
+void StreamlineVtkm::resolveMissingValues(const viskores::cont::DataSet &streamlines,
+                                          const viskores::cont::PartitionedDataSet &input) const
+{
+    // the filter samples each point on the block that traced it, which fails at block boundaries: probe those
+    // points on all input blocks instead
+    std::vector<std::string> names;
+    for (int port = 0; port < m_numPorts; ++port) {
+        if (!m_outputPorts[port]->isConnected())
+            continue;
+        const auto name = getFieldName(port);
+        if (streamlines.HasPointField(name) && hasMissingValues(streamlines.GetPointField(name).GetData()))
+            names.push_back(name);
+    }
+    if (names.empty())
+        return;
+
+    // geometry only, so that the probed fields do not clash with the (incomplete) sampled ones
+    viskores::cont::DataSet geometry;
+    geometry.AddCoordinateSystem(streamlines.GetCoordinateSystem());
+    geometry.SetCellSet(streamlines.GetCellSet());
+    const auto geometryBounds = geometry.GetCoordinateSystem().GetBounds();
+
+    for (viskores::Id block = 0; block < input.GetNumberOfPartitions(); ++block) {
+        const auto &blockData = input.GetPartition(block);
+        if (!blockData.GetCoordinateSystem().GetBounds().Intersection(geometryBounds).IsNonEmpty())
+            continue;
+
+        auto probeFilter = viskores::filter::resampling::Probe();
+        probeFilter.SetGeometry(geometry);
+        viskores::filter::FieldSelection selection(viskores::filter::FieldSelection::Mode::None);
+        for (const auto &name: names)
+            selection.AddField(name, viskores::cont::Field::Association::Points);
+        probeFilter.SetFieldsToPass(selection);
+
+        viskores::cont::DataSet probeOutput;
+        if (!this->tryToExecuteFilter(probeFilter, blockData, probeOutput))
+            continue;
+
+        viskores::cont::ArrayHandle<viskores::UInt8> hidden;
+        probeOutput.GetField("HIDDEN", viskores::cont::Field::Association::Points).GetData().AsArrayHandle(hidden);
+
+        bool anyMissing = false;
+        for (const auto &name: names) {
+            if (!probeOutput.HasField(name, viskores::cont::Field::Association::Points))
+                continue;
+            auto dst = streamlines.GetPointField(name).GetData();
+            mergeMissingValues(dst, probeOutput.GetField(name, viskores::cont::Field::Association::Points).GetData(),
+                               hidden);
+            anyMissing = anyMissing || hasMissingValues(dst);
+        }
+        if (!anyMissing)
+            return;
+    }
+
+    for (const auto &name: names)
+        fillRemainingMissingValues(streamlines.GetPointField(name).GetData());
 }
 
 bool StreamlineVtkm::changeParameter(const Parameter *param)
