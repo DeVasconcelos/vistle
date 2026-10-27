@@ -92,6 +92,9 @@ private:
     void resolveMissingValues(const viskores::cont::DataSet &streamlines,
                               const viskores::cont::PartitionedDataSet &input) const;
 
+    // drops streamlines consisting of a single point; returns false if no streamline is left
+    bool removeDegenerateStreamlines(viskores::cont::DataSet &streamlines) const;
+
     bool checkAndNotify(const ModuleStatusPtr &status) const;
 
     void createModulePorts();

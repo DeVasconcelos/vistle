@@ -9,6 +9,7 @@
 #include <viskores/cont/ArrayHandleStride.h>
 #include <viskores/cont/EnvironmentTracker.h>
 #include <viskores/filter/FieldSelection.h>
+#include <viskores/filter/entity_extraction/Threshold.h>
 #include <viskores/filter/resampling/Probe.h>
 #include <viskores/thirdparty/diy/diy.h>
 #include <viskores/thirdparty/diy/mpi-cast.h>
@@ -162,8 +163,12 @@ bool StreamlineVtkm::reduce(int timestep)
         return true;
 
     for (viskores::Id partitionIndex = 0; partitionIndex < output.GetNumberOfPartitions(); partitionIndex++) {
-        const auto &dataset = output.GetPartition(partitionIndex);
+        auto dataset = output.GetPartition(partitionIndex);
         resolveMissingValues(dataset, inputPartitionedDataset);
+
+        // streamlines with a single point (e.g., seeds that could not be advanced) would end up as spheres
+        if (!removeDegenerateStreamlines(dataset))
+            continue;
         auto outputGrid = vtkmGetGeometry(dataset);
         if (!outputGrid) {
             sendError("Could not convert StreamlineVtkm output geometry to a Vistle object.");
@@ -332,6 +337,35 @@ void StreamlineVtkm::resolveMissingValues(const viskores::cont::DataSet &streaml
 
     for (const auto &name: names)
         fillRemainingMissingValues(streamlines.GetPointField(name).GetData());
+}
+
+bool StreamlineVtkm::removeDegenerateStreamlines(viskores::cont::DataSet &streamlines) const
+{
+    const auto cellSet = streamlines.GetCellSet();
+    const viskores::Id numCells = cellSet.GetNumberOfCells();
+
+    viskores::cont::ArrayHandle<viskores::Float32> numPoints;
+    numPoints.Allocate(numCells);
+    auto portal = numPoints.WritePortal();
+    bool anyDegenerate = false;
+    for (viskores::Id cell = 0; cell < numCells; ++cell) {
+        const auto n = cellSet.GetNumberOfPointsInCell(cell);
+        portal.Set(cell, static_cast<viskores::Float32>(n));
+        anyDegenerate = anyDegenerate || n < 2;
+    }
+    if (!anyDegenerate)
+        return numCells > 0;
+
+    const std::string name = "StreamlineNumPoints";
+    streamlines.AddCellField(name, numPoints);
+    viskores::filter::entity_extraction::Threshold threshold;
+    threshold.SetActiveField(name, viskores::cont::Field::Association::Cells);
+    threshold.SetThresholdAbove(2.0);
+    viskores::cont::DataSet cleaned;
+    if (!tryToExecuteFilter(threshold, streamlines, cleaned) || cleaned.GetNumberOfCells() == 0)
+        return false;
+    streamlines = cleaned;
+    return true;
 }
 
 bool StreamlineVtkm::changeParameter(const Parameter *param)
