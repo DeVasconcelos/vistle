@@ -38,14 +38,15 @@ struct FlowTraits<vistle::SampledStreamline> {
 namespace vistle {
 
 /*
-    A variant of viskores::filter::flow::Streamline that samples data fields in its particle
-    analysis hooks while accepted integration steps are recorded. Each output partition carries
-    values evaluated on the input partition that traced its streamline pieces. Points that could not
-    be evaluated there (e.g. at partition boundaries) are NaN.
+    A variant of viskores::filter::flow::Streamline which, in addition to tracing the path that each
+    provided seed point would take if moving according to the velocity given in the active field,
+    also samples the input data fields onto the resulting streamlines.
+    Points that could not be evaluated (e.g. at partition boundaries) are NaN.
 
     Sampled fields keep their value type and number of components. Cell fields take the value of the
-    cell containing a point, point fields the value of the nearest vertex of that cell (no interpolation).
-    Missing values are NaN for floating point fields and 0 for integer fields.
+    cell containing a point. Floating-point point fields are interpolated within the containing cell;
+    other point fields take the value of the nearest vertex. Missing values are NaN for floating-point
+    fields and 0 for integer fields.
 */
 class SampledStreamline: public viskores::filter::flow::FilterParticleAdvectionSteadyState<SampledStreamline> {
 public:
@@ -61,7 +62,7 @@ public:
 
     VISKORES_CONT AnalysisType GetAnalysis(const viskores::cont::DataSet &data) const;
 
-    // Names of point or cell fields to sample during streamline integration.
+    // Sets the names of point or cell fields to sample during streamline integration.
     void SetSampledFields(const std::vector<std::string> &names) { m_sampledFields = names; }
 
 private:

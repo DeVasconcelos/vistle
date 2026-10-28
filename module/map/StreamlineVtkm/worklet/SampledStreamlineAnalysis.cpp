@@ -10,6 +10,7 @@
 #include <viskores/cont/ArrayCopy.h>
 #include <viskores/cont/ArrayHandleConstant.h>
 #include <viskores/cont/Invoker.h>
+#include <viskores/exec/CellInterpolate.h>
 #include <viskores/worklet/WorkletMapField.h>
 
 #include "SampledStreamlineAnalysis.h"
@@ -46,6 +47,30 @@ struct NearestVertexWorklet: viskores::worklet::WorkletMapField {
                 pointId = pointIds[v];
             }
         }
+    }
+};
+
+struct InterpolatePointFieldWorklet: viskores::worklet::WorkletMapField {
+    using ControlSignature = void(FieldIn cellId, FieldIn parametric, ExecObject helper, WholeArrayIn source,
+                                  FieldOut value);
+    using ExecutionSignature = void(_1, _2, _3, _4, _5);
+
+    template<typename SourcePortal, typename T>
+    VISKORES_EXEC void operator()(viskores::Id cellId, const viskores::Vec3f &parametric,
+                                  const viskores::exec::CellInterpolationHelper &helper, const SourcePortal &source,
+                                  T &value) const
+    {
+        value = viskores::Nan<T>();
+        if (cellId < 0)
+            return;
+
+        viskores::UInt8 shape;
+        viskores::IdComponent numVerts;
+        viskores::VecVariable<viskores::Id, 8> pointIds;
+        helper.GetCellInfo(cellId, shape, numVerts, pointIds);
+        if (viskores::exec::CellInterpolate(pointIds, source, parametric, viskores::CellShapeTagGeneric(shape),
+                                            value) != viskores::ErrorCode::Success)
+            value = viskores::Nan<T>();
     }
 };
 
@@ -90,6 +115,46 @@ viskores::cont::UnknownArrayHandle gather(const viskores::cont::UnknownArrayHand
     };
     viskores::ListForEach(tryType, viskores::TypeListScalarAll{});
     return result;
+}
+
+viskores::cont::UnknownArrayHandle interpolatePointField(const viskores::cont::UnknownArrayHandle &data,
+                                                         const viskores::cont::ArrayHandle<viskores::Id> &cellIds,
+                                                         const viskores::cont::ArrayHandle<viskores::Vec3f> &parametric,
+                                                         const viskores::cont::ArrayHandle<viskores::Id> &validity,
+                                                         const viskores::cont::CellInterpolationHelper &helper)
+{
+    auto result = data.NewInstanceBasic();
+    result.Allocate(cellIds.GetNumberOfValues());
+    auto compacted = data.NewInstanceBasic();
+    compacted.Allocate(validity.GetNumberOfValues());
+
+    bool handled = false;
+    bool interpolated = false;
+    auto tryType = [&](auto t) {
+        using T = std::decay_t<decltype(t)>;
+        if (handled || !data.IsBaseComponentType<T>())
+            return;
+        handled = true;
+        if constexpr (std::is_floating_point<T>::value) {
+            interpolated = true;
+            viskores::cont::Invoker invoke;
+            for (viskores::IdComponent c = 0; c < data.GetNumberOfComponentsFlat(); ++c) {
+                auto target = result.ExtractComponent<T>(c, viskores::CopyFlag::Off);
+                invoke(InterpolatePointFieldWorklet{}, cellIds, parametric, helper, data.ExtractComponent<T>(c),
+                       target);
+                auto inputComponent = result.ExtractComponent<T>(c);
+                viskores::cont::ArrayHandle<T> compactedComponent;
+                viskores::cont::Algorithm::CopyIf(inputComponent, validity, compactedComponent);
+                auto outputComponent = compacted.ExtractComponent<T>(c, viskores::CopyFlag::Off);
+                viskores::cont::ArrayCopy(compactedComponent, outputComponent);
+            }
+        }
+    };
+    viskores::ListForEach(tryType, viskores::TypeListScalarAll{});
+    if (!handled || !interpolated)
+        return {};
+
+    return compacted;
 }
 
 } // namespace
@@ -245,6 +310,12 @@ SampledStreamlineAnalysis::FinalizeAnalysis(viskores::cont::ArrayHandle<viskores
     for (const auto &sampler: m_samplers) {
         if (sampler.association == viskores::cont::Field::Association::Cells) {
             m_values.push_back(gather(sampler.data, cellIds));
+            continue;
+        }
+        if (sampler.data.IsBaseComponentType<viskores::Float32>() ||
+            sampler.data.IsBaseComponentType<viskores::Float64>()) {
+            m_values.push_back(
+                interpolatePointField(sampler.data, m_cellIds, m_parametric, m_validity, m_interpolationHelper));
             continue;
         }
         if (!haveNearestVertices) {
