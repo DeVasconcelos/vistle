@@ -217,6 +217,22 @@ bool StreamlineVtkm::reduce(int timestep)
 
 namespace {
 
+// Calls f(T) with the floating point base component type of array and returns true, or returns false if array
+// does not store floating point values (missing values are only marked for those, as NaN)
+template<typename F>
+bool withFloatType(const viskores::cont::UnknownArrayHandle &array, F &&f)
+{
+    if (array.IsBaseComponentType<viskores::Float32>()) {
+        f(viskores::Float32());
+        return true;
+    }
+    if (array.IsBaseComponentType<viskores::Float64>()) {
+        f(viskores::Float64());
+        return true;
+    }
+    return false;
+}
+
 // Copies the values of src to dst at all points where dst is NaN (i.e., could not be sampled while tracing) and
 // where src is visible. Returns false if the arrays are incompatible.
 bool mergeMissingValues(const viskores::cont::UnknownArrayHandle &dst, const viskores::cont::UnknownArrayHandle &src,
@@ -225,59 +241,61 @@ bool mergeMissingValues(const viskores::cont::UnknownArrayHandle &dst, const vis
     const viskores::Id n = dst.GetNumberOfValues();
     const viskores::IdComponent numComponents = dst.GetNumberOfComponentsFlat();
     if (src.GetNumberOfValues() != n || srcHidden.GetNumberOfValues() != n ||
-        src.GetNumberOfComponentsFlat() != numComponents || !dst.IsBaseComponentType<viskores::FloatDefault>())
+        src.GetNumberOfComponentsFlat() != numComponents)
         return false;
 
     auto hidden = srcHidden.ReadPortal();
-    bool called = false;
-    auto tryType = [&](auto t) {
-        using T = std::decay_t<decltype(t)>;
-        if (called || !src.IsBaseComponentType<T>())
-            return;
-        called = true;
-        for (viskores::IdComponent c = 0; c < numComponents; ++c) {
-            // extracting without copying: the stride array aliases dst's buffer, so it is updated in place
-            auto out = dst.ExtractComponent<viskores::FloatDefault>(c, viskores::CopyFlag::Off).WritePortal();
-            auto in = src.ExtractComponent<T>(c).ReadPortal();
-            for (viskores::Id i = 0; i < n; ++i) {
-                if (std::isnan(out.Get(i)) && !hidden.Get(i))
-                    out.Set(i, static_cast<viskores::FloatDefault>(in.Get(i)));
+    return withFloatType(dst, [&](auto d) {
+        using D = decltype(d);
+        bool called = false;
+        auto tryType = [&](auto t) {
+            using T = std::decay_t<decltype(t)>;
+            if (called || !src.IsBaseComponentType<T>())
+                return;
+            called = true;
+            for (viskores::IdComponent c = 0; c < numComponents; ++c) {
+                // extracting without copying: the stride array aliases dst's buffer, so it is updated in place
+                auto out = dst.ExtractComponent<D>(c, viskores::CopyFlag::Off).WritePortal();
+                auto in = src.ExtractComponent<T>(c).ReadPortal();
+                for (viskores::Id i = 0; i < n; ++i) {
+                    if (std::isnan(out.Get(i)) && !hidden.Get(i))
+                        out.Set(i, static_cast<D>(in.Get(i)));
+                }
             }
-        }
-    };
-    viskores::ListForEach(tryType, viskores::TypeListScalarAll{});
-    return called;
+        };
+        viskores::ListForEach(tryType, viskores::TypeListScalarAll{});
+    });
 }
 
 bool hasMissingValues(const viskores::cont::UnknownArrayHandle &array)
 {
-    if (!array.IsBaseComponentType<viskores::FloatDefault>())
-        return false;
-    for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat(); ++c) {
-        auto portal = array.ExtractComponent<viskores::FloatDefault>(c).ReadPortal();
-        for (viskores::Id i = 0; i < portal.GetNumberOfValues(); ++i) {
-            if (std::isnan(portal.Get(i)))
-                return true;
+    bool missing = false;
+    withFloatType(array, [&](auto d) {
+        using D = decltype(d);
+        for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat(); ++c) {
+            auto portal = array.ExtractComponent<D>(c).ReadPortal();
+            for (viskores::Id i = 0; i < portal.GetNumberOfValues(); ++i) {
+                if (std::isnan(portal.Get(i)))
+                    missing = true;
+            }
         }
-    }
-    return false;
+    });
+    return missing;
 }
 
 // Points that are not inside any input block (e.g. the last step beyond the domain) repeat the previous value.
 void fillRemainingMissingValues(const viskores::cont::UnknownArrayHandle &array)
 {
-    if (!array.IsBaseComponentType<viskores::FloatDefault>())
-        return;
-    const viskores::IdComponent numComponents = array.GetNumberOfComponentsFlat();
-    std::vector<viskores::cont::ArrayHandleStride<viskores::FloatDefault>::WritePortalType> portals;
-    for (viskores::IdComponent c = 0; c < numComponents; ++c)
-        portals.push_back(array.ExtractComponent<viskores::FloatDefault>(c, viskores::CopyFlag::Off).WritePortal());
-    for (viskores::Id i = 0; i < array.GetNumberOfValues(); ++i) {
-        for (auto &portal: portals) {
-            if (std::isnan(portal.Get(i)))
-                portal.Set(i, i > 0 ? portal.Get(i - 1) : viskores::FloatDefault(0));
+    withFloatType(array, [&](auto d) {
+        using D = decltype(d);
+        for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat(); ++c) {
+            auto portal = array.ExtractComponent<D>(c, viskores::CopyFlag::Off).WritePortal();
+            for (viskores::Id i = 0; i < portal.GetNumberOfValues(); ++i) {
+                if (std::isnan(portal.Get(i)))
+                    portal.Set(i, i > 0 ? portal.Get(i - 1) : D(0));
+            }
         }
-    }
+    });
 }
 } // namespace
 

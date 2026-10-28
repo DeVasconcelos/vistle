@@ -43,9 +43,9 @@ namespace vistle {
     values evaluated on the input partition that traced its streamline pieces. Points that could not
     be evaluated there (e.g. at partition boundaries) are NaN.
 
-    Sampled fields are evaluated as viskores::Vec3f internally (missing components are padded with
-    zeros, components beyond the third are dropped). Scalar fields are returned as scalars
-    (viskores::FloatDefault), all others as viskores::Vec3f.
+    Sampled fields keep their value type and number of components. Cell fields take the value of the
+    cell containing a point, point fields the value of the nearest vertex of that cell (no interpolation).
+    Missing values are NaN for floating point fields and 0 for integer fields.
 */
 class SampledStreamline: public viskores::filter::flow::FilterParticleAdvectionSteadyState<SampledStreamline> {
 public:
