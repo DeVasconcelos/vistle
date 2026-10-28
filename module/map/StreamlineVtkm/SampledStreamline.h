@@ -55,13 +55,13 @@ public:
     using ArrayType = viskores::filter::flow::FlowTraits<SampledStreamline>::ArrayType;
     using FieldType = viskores::filter::flow::FlowTraits<SampledStreamline>::FieldType;
 
-    FieldType GetField(const viskores::cont::DataSet &data) const;
+    VISKORES_CONT FieldType GetField(const viskores::cont::DataSet &data) const;
 
-    TerminationType GetTermination(const viskores::cont::DataSet &data) const;
+    VISKORES_CONT TerminationType GetTermination(const viskores::cont::DataSet &data) const;
 
-    AnalysisType GetAnalysis(const viskores::cont::DataSet &data) const;
+    VISKORES_CONT AnalysisType GetAnalysis(const viskores::cont::DataSet &data) const;
 
-    // Names of up to three point or cell fields to sample during streamline integration.
+    // Names of point or cell fields to sample during streamline integration.
     void SetSampledFields(const std::vector<std::string> &names) { m_sampledFields = names; }
 
 private:

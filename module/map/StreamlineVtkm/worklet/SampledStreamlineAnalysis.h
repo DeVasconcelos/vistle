@@ -20,20 +20,22 @@ using SampledEvaluatorType = viskores::worklet::flow::GridEvaluator<SampledField
 
 class SampledStreamlineAnalysisExec {
 public:
-    static constexpr viskores::IdComponent MaxSampledFields = 3;
-
     using BaseExec = viskores::worklet::flow::StreamlineAnalysisExec<viskores::Particle>;
     using EvaluatorType = viskores::worklet::flow::ExecutionGridEvaluator<SampledFieldType>;
     using ValuesPortal = viskores::cont::ArrayHandle<viskores::Vec3f>::WritePortalType;
+    struct FieldExec {
+        EvaluatorType evaluator;
+        ValuesPortal values;
+    };
+    using FieldsPortal = viskores::cont::ArrayHandle<FieldExec>::ReadPortalType;
     using LengthsPortal = viskores::cont::ArrayHandle<viskores::Id>::WritePortalType;
     using ValidityPortal = viskores::cont::ArrayHandle<viskores::Id>::WritePortalType;
 
-    VISKORES_CONT SampledStreamlineAnalysisExec(BaseExec base, const std::vector<SampledEvaluatorType> &evaluators,
-                                                const std::vector<viskores::cont::ArrayHandle<viskores::Vec3f>> &values,
+    VISKORES_CONT SampledStreamlineAnalysisExec(BaseExec base, const viskores::cont::ArrayHandle<FieldExec> &fields,
                                                 const viskores::cont::ArrayHandle<viskores::Id> &lengths,
                                                 const viskores::cont::ArrayHandle<viskores::Id> &validity,
-                                                viskores::IdComponent numFields, viskores::Id maxSteps,
-                                                viskores::cont::DeviceAdapterId device, viskores::cont::Token &token);
+                                                viskores::Id maxSteps, viskores::cont::DeviceAdapterId device,
+                                                viskores::cont::Token &token);
 
     VISKORES_EXEC void PreStepAnalyze(viskores::Id index, const viskores::Particle &particle);
     VISKORES_EXEC void Analyze(viskores::Id index, const viskores::Particle &oldParticle,
@@ -43,12 +45,11 @@ private:
     VISKORES_EXEC void Sample(viskores::Id loc, const viskores::Vec3f &position);
 
     BaseExec m_base;
-    viskores::IdComponent m_numFields;
+    viskores::Id m_numFields;
     viskores::Id m_maxSteps;
     LengthsPortal m_lengths;
     ValidityPortal m_validity;
-    EvaluatorType m_evaluators[MaxSampledFields];
-    ValuesPortal m_values[MaxSampledFields];
+    FieldsPortal m_fields;
 };
 
 class SampledStreamlineAnalysis: public viskores::worklet::flow::StreamlineAnalysis<viskores::Particle> {

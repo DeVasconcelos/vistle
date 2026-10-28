@@ -46,38 +46,18 @@ bool toVec3f(const viskores::cont::UnknownArrayHandle &in, viskores::cont::Array
     return true;
 }
 
-// unused slots reuse the last valid entry, as the evaluators have no default constructor
-SampledStreamlineAnalysisExec::EvaluatorType prepareEvaluator(const std::vector<SampledEvaluatorType> &evaluators,
-                                                              std::size_t i, viskores::cont::DeviceAdapterId device,
-                                                              viskores::cont::Token &token)
-{
-    return evaluators[std::min(i, evaluators.size() - 1)].PrepareForExecution(device, token);
-}
-
-SampledStreamlineAnalysisExec::ValuesPortal
-preparePortal(const std::vector<viskores::cont::ArrayHandle<viskores::Vec3f>> &values, std::size_t i,
-              viskores::cont::DeviceAdapterId device, viskores::cont::Token &token)
-{
-    return values[std::min(i, values.size() - 1)].PrepareForInPlace(device, token);
-}
-
 } // namespace
 
 VISKORES_CONT SampledStreamlineAnalysisExec::SampledStreamlineAnalysisExec(
-    BaseExec base, const std::vector<SampledEvaluatorType> &evaluators,
-    const std::vector<viskores::cont::ArrayHandle<viskores::Vec3f>> &values,
+    BaseExec base, const viskores::cont::ArrayHandle<FieldExec> &fields,
     const viskores::cont::ArrayHandle<viskores::Id> &lengths, const viskores::cont::ArrayHandle<viskores::Id> &validity,
-    viskores::IdComponent numFields, viskores::Id maxSteps, viskores::cont::DeviceAdapterId device,
-    viskores::cont::Token &token)
+    viskores::Id maxSteps, viskores::cont::DeviceAdapterId device, viskores::cont::Token &token)
 : m_base(std::move(base))
-, m_numFields(numFields)
+, m_numFields(fields.GetNumberOfValues())
 , m_maxSteps(maxSteps + 1)
 , m_lengths(lengths.PrepareForInPlace(device, token))
 , m_validity(validity.PrepareForInPlace(device, token))
-, m_evaluators{prepareEvaluator(evaluators, 0, device, token), prepareEvaluator(evaluators, 1, device, token),
-               prepareEvaluator(evaluators, 2, device, token)}
-, m_values{preparePortal(values, 0, device, token), preparePortal(values, 1, device, token),
-           preparePortal(values, 2, device, token)}
+, m_fields(fields.PrepareForInput(device, token))
 {}
 
 SampledStreamlineAnalysis::SampledStreamlineAnalysis(viskores::Id maxSteps): Base(maxSteps), m_maxSteps(maxSteps)
@@ -138,15 +118,16 @@ SampledStreamlineAnalysis::InitializeAnalysis(const viskores::cont::ArrayHandle<
 VISKORES_CONT SampledStreamlineAnalysisExec SampledStreamlineAnalysis::PrepareForExecution(
     viskores::cont::DeviceAdapterId device, viskores::cont::Token &token) const
 {
-    std::vector<EvaluatorType> evaluators;
-    evaluators.reserve(m_samplers.size());
-    for (const auto &sampler: m_samplers)
-        evaluators.push_back(sampler.evaluator);
+    std::vector<SampledStreamlineAnalysisExec::FieldExec> fields;
+    fields.reserve(m_samplers.size());
+    for (std::size_t i = 0; i < m_samplers.size(); ++i) {
+        fields.push_back(
+            {m_samplers[i].evaluator.PrepareForExecution(device, token), m_values[i].PrepareForInPlace(device, token)});
+    }
+    auto fieldsHandle = viskores::cont::make_ArrayHandle(fields, viskores::CopyFlag::On);
 
     auto base = Base::PrepareForExecution(device, token);
-    return SampledStreamlineAnalysisExec(base, evaluators, m_values, m_streamLengths, m_validity,
-                                         static_cast<viskores::IdComponent>(m_samplers.size()), m_maxSteps, device,
-                                         token);
+    return SampledStreamlineAnalysisExec(base, fieldsHandle, m_streamLengths, m_validity, m_maxSteps, device, token);
 }
 
 VISKORES_EXEC void SampledStreamlineAnalysisExec::PreStepAnalyze(viskores::Id index, const viskores::Particle &particle)
@@ -173,13 +154,12 @@ VISKORES_EXEC void SampledStreamlineAnalysisExec::Analyze(viskores::Id index, co
 
 VISKORES_EXEC void SampledStreamlineAnalysisExec::Sample(viskores::Id loc, const viskores::Vec3f &position)
 {
-    for (viskores::Id field = 0; field < m_numFields; ++field) {
+    for (viskores::Id field = 0; field < m_numFields; field++) {
+        const auto sampler = m_fields.Get(field);
         viskores::VecVariable<viskores::Vec3f, 2> value;
-        const auto status = m_evaluators[field].Evaluate(position, viskores::FloatDefault(0), value);
+        const auto status = sampler.evaluator.Evaluate(position, viskores::FloatDefault(0), value);
         if (status.CheckOk())
-            m_values[field].Set(loc, value[0]);
-        // Points on or just outside the partition boundary have no local interpolant and stay NaN,
-        // so that they can be resolved against the other partitions later.
+            sampler.values.Set(loc, value[0]);
     }
 }
 
@@ -207,29 +187,30 @@ bool SampledStreamlineAnalysis::MakeDataSet(viskores::cont::DataSet &dataset,
         return false;
 
     const auto &samplers = results.front().m_samplers;
-    for (std::size_t s = 0; s < samplers.size(); ++s) {
+    for (std::size_t i = 0; i < samplers.size(); i++) {
         viskores::cont::ArrayHandle<viskores::Vec3f> values;
         if (results.size() == 1) {
-            values = results.front().m_values[s];
+            values = results.front().m_values[i];
         } else {
             viskores::Id total = 0;
             for (const auto &res: results)
-                total += res.m_values[s].GetNumberOfValues();
+                total += res.m_values[i].GetNumberOfValues();
             values.Allocate(total);
             viskores::Id offset = 0;
+            // concatenate the results from all samplers
             for (const auto &res: results) {
-                const auto &part = res.m_values[s];
+                const auto &part = res.m_values[i];
                 viskores::cont::Algorithm::CopySubRange(part, 0, part.GetNumberOfValues(), values, offset);
                 offset += part.GetNumberOfValues();
             }
         }
 
-        if (samplers[s].numComponents == 1) {
+        if (samplers[i].numComponents == 1) {
             viskores::cont::ArrayHandle<viskores::FloatDefault> scalar;
             viskores::cont::ArrayCopy(viskores::cont::make_ArrayHandleExtractComponent(values, 0), scalar);
-            dataset.AddPointField(samplers[s].name, scalar);
+            dataset.AddPointField(samplers[i].name, scalar);
         } else {
-            dataset.AddPointField(samplers[s].name, values);
+            dataset.AddPointField(samplers[i].name, values);
         }
     }
     return true;

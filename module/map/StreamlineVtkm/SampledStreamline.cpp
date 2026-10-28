@@ -6,8 +6,7 @@
 
 namespace vistle {
 
-// same as streamline
-SampledStreamline::FieldType SampledStreamline::GetField(const viskores::cont::DataSet &dataset) const
+VISKORES_CONT SampledStreamline::FieldType SampledStreamline::GetField(const viskores::cont::DataSet &dataset) const
 {
     const auto &fieldNm = this->GetActiveFieldName();
     if (!dataset.HasPointField(fieldNm) && !dataset.HasCellField(fieldNm))
@@ -18,27 +17,26 @@ SampledStreamline::FieldType SampledStreamline::GetField(const viskores::cont::D
     return viskores::worklet::flow::VelocityField<ArrayType>(arr, assoc);
 }
 
-// also the same as streamline
-SampledStreamline::TerminationType SampledStreamline::GetTermination(const viskores::cont::DataSet &dataset) const
+VISKORES_CONT SampledStreamline::TerminationType
+SampledStreamline::GetTermination(const viskores::cont::DataSet &dataset) const
 {
     // dataset not used
     (void)dataset;
     return SampledStreamline::TerminationType(this->NumberOfSteps);
 }
 
-// different from streamline: adds the sampled fields to the analysis object
-SampledStreamline::AnalysisType SampledStreamline::GetAnalysis(const viskores::cont::DataSet &dataset) const
+VISKORES_CONT SampledStreamline::AnalysisType
+SampledStreamline::GetAnalysis(const viskores::cont::DataSet &dataset) const
 {
-    if (m_sampledFields.size() > SampledStreamlineAnalysisExec::MaxSampledFields)
-        throw viskores::cont::ErrorFilterExecution("At most three input fields can be sampled");
-
     SampledStreamline::AnalysisType analysis(this->NumberOfSteps);
     for (const auto &name: m_sampledFields)
         if (!analysis.AddSampledField(dataset, name))
             throw viskores::cont::ErrorFilterExecution("Could not sample input field: " + name);
+
     // by default, sample the active field if no other fields were specified
-    if (m_sampledFields.empty())
-        analysis.AddSampledField(dataset, this->GetActiveFieldName());
+    if (m_sampledFields.empty() && !analysis.AddSampledField(dataset, this->GetActiveFieldName()))
+        throw viskores::cont::ErrorFilterExecution("Could not sample active input field: " +
+                                                   this->GetActiveFieldName());
     return analysis;
 }
 
