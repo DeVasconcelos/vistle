@@ -1,26 +1,19 @@
-#include <algorithm>
 #include <array>
-#include <type_traits>
-#include <utility>
 
-#include <viskores/Math.h>
 #include <viskores/TypeList.h>
+#include <viskores/VecVariable.h>
+
 #include <viskores/cont/Algorithm.h>
 #include <viskores/cont/ArrayCopy.h>
 #include <viskores/cont/ArrayHandleCast.h>
 #include <viskores/cont/ArrayHandleCompositeVector.h>
 #include <viskores/cont/ArrayHandleConstant.h>
 #include <viskores/cont/ArrayHandleExtractComponent.h>
-#include <viskores/cont/ErrorFilterExecution.h>
-#include <viskores/filter/flow/internal/FilterParticleAdvectionSteadyStateImpl.h>
-#include <viskores/filter/flow/worklet/ParticleAdvectionWorklets.h>
 
-#include "SampledStreamline.h"
+#include "SampledStreamlineAnalysis.h"
 
 namespace vistle {
-
 namespace {
-
 // Converts the (flattened) components of an array to a Vec3f array: missing components are padded with zeros,
 // components beyond the third are dropped.
 bool toVec3f(const viskores::cont::UnknownArrayHandle &in, viskores::cont::ArrayHandle<viskores::Vec3f> &out,
@@ -242,37 +235,4 @@ bool SampledStreamlineAnalysis::MakeDataSet(viskores::cont::DataSet &dataset,
     return true;
 }
 
-SampledStreamline::FieldType SampledStreamline::GetField(const viskores::cont::DataSet &dataset) const
-{
-    const auto &name = this->GetActiveFieldName();
-    if (!dataset.HasPointField(name) && !dataset.HasCellField(name))
-        throw viskores::cont::ErrorFilterExecution("Unsupported field association");
-    auto assoc = dataset.GetField(name).GetAssociation();
-    ArrayType array;
-    viskores::cont::ArrayCopyShallowIfPossible(dataset.GetField(name).GetData(), array);
-    return FieldType(array, assoc);
-}
-
-SampledStreamline::TerminationType SampledStreamline::GetTermination(const viskores::cont::DataSet &) const
-{
-    return TerminationType(this->NumberOfSteps);
-}
-
-SampledStreamline::AnalysisType SampledStreamline::GetAnalysis(const viskores::cont::DataSet &dataset) const
-{
-    if (m_sampledFields.size() > SampledStreamlineAnalysisExec::MaxSampledFields)
-        throw viskores::cont::ErrorFilterExecution("At most three input fields can be sampled");
-
-    AnalysisType analysis(this->NumberOfSteps);
-    for (const auto &name: m_sampledFields)
-        if (!analysis.AddSampledField(dataset, name))
-            throw viskores::cont::ErrorFilterExecution("Could not sample input field: " + name);
-    // the execution object cannot be default-constructed and needs at least one evaluator
-    if (m_sampledFields.empty())
-        analysis.AddSampledField(dataset, this->GetActiveFieldName());
-    return analysis;
-}
-
 } // namespace vistle
-
-template class viskores::filter::flow::FilterParticleAdvectionSteadyState<vistle::SampledStreamline>;

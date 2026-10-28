@@ -20,7 +20,7 @@
 #include <vistle/vtkm/vtkm_module_utils.h>
 
 #include "worklet/GenerateSeeds.h"
-#include "worklet/SampledStreamline.h"
+#include "SampledStreamline.h"
 #include "StreamlineVtkm.h"
 
 using namespace vistle;
