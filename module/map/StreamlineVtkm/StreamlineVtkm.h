@@ -89,8 +89,9 @@ private:
     bool tryToExecuteFilter(viskores::filter::Filter &filter, const viskores::cont::PartitionedDataSet &inputDataset,
                             viskores::cont::PartitionedDataSet &outputDataset) const;
 
-    std::map<std::string, viskores::cont::UnknownArrayHandle>
-    probeInputBlocks(const viskores::cont::DataSet &geometry, const viskores::cont::PartitionedDataSet &input) const;
+    bool probeSuitableInputFields(const viskores::cont::DataSet &geometry,
+                                  const viskores::cont::PartitionedDataSet &input,
+                                  viskores::cont::DataSet &probeOutput) const;
 
     bool checkAndNotify(const ModuleStatusPtr &status) const;
 
