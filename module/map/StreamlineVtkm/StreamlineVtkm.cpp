@@ -3,8 +3,10 @@
 #include <type_traits>
 
 #include <viskores/TypeList.h>
+#include <viskores/cont/Algorithm.h>
 #include <viskores/cont/ArrayHandleStride.h>
 #include <viskores/cont/EnvironmentTracker.h>
+#include <viskores/cont/Invoker.h>
 #include <viskores/cont/UnknownArrayHandle.h>
 #include <viskores/filter/FieldSelection.h>
 #include <viskores/filter/entity_extraction/Threshold.h>
@@ -12,6 +14,7 @@
 #include <viskores/thirdparty/diy/diy.h>
 #include <viskores/thirdparty/diy/mpi-cast.h>
 #include <viskores/VectorAnalysis.h>
+#include <viskores/worklet/WorkletMapField.h>
 
 #include <vistle/util/enum.h>
 #include <vistle/vtkm/convert.h>
@@ -231,6 +234,18 @@ bool withFloatType(const viskores::cont::UnknownArrayHandle &array, F &&f)
     return false;
 }
 
+struct MergeMissingWorklet: viskores::worklet::WorkletMapField {
+    using ControlSignature = void(FieldIn srcHidden, FieldIn src, FieldInOut dst);
+    using ExecutionSignature = void(_1, _2, _3);
+
+    template<typename S, typename D>
+    VISKORES_EXEC void operator()(viskores::UInt8 srcHidden, const S &src, D &dst) const
+    {
+        if (viskores::IsNan(dst) && !srcHidden)
+            dst = static_cast<D>(src);
+    }
+};
+
 // Copies the values of src to dst at all points where dst is NaN (i.e., could not be sampled while tracing) and
 // where src is visible. Returns false if the arrays are incompatible.
 bool mergeMissingValues(const viskores::cont::UnknownArrayHandle &dst, const viskores::cont::UnknownArrayHandle &src,
@@ -242,10 +257,10 @@ bool mergeMissingValues(const viskores::cont::UnknownArrayHandle &dst, const vis
         src.GetNumberOfComponentsFlat() != numComponents)
         return false;
 
-    auto hidden = srcHidden.ReadPortal();
-    return withFloatType(dst, [&](auto d) {
+    viskores::cont::Invoker invoke;
+    bool called = false;
+    withFloatType(dst, [&](auto d) {
         using D = decltype(d);
-        bool called = false;
         auto tryType = [&](auto t) {
             using T = std::decay_t<decltype(t)>;
             if (called || !src.IsBaseComponentType<T>())
@@ -253,33 +268,38 @@ bool mergeMissingValues(const viskores::cont::UnknownArrayHandle &dst, const vis
             called = true;
             for (viskores::IdComponent c = 0; c < numComponents; ++c) {
                 // extracting without copying: the stride array aliases dst's buffer, so it is updated in place
-                auto out = dst.ExtractComponent<D>(c, viskores::CopyFlag::Off).WritePortal();
-                auto in = src.ExtractComponent<T>(c).ReadPortal();
-                for (viskores::Id i = 0; i < n; ++i) {
-                    if (std::isnan(out.Get(i)) && !hidden.Get(i))
-                        out.Set(i, static_cast<D>(in.Get(i)));
-                }
+                invoke(MergeMissingWorklet{}, srcHidden, src.ExtractComponent<T>(c),
+                       dst.ExtractComponent<D>(c, viskores::CopyFlag::Off));
             }
         };
         viskores::ListForEach(tryType, viskores::TypeListScalarAll{});
     });
+    return called;
 }
+
+struct IsMissingWorklet: viskores::worklet::WorkletMapField {
+    using ControlSignature = void(FieldIn value, FieldOut missing);
+    using ExecutionSignature = _2(_1);
+
+    template<typename T>
+    VISKORES_EXEC viskores::Id operator()(const T &value) const
+    {
+        return viskores::IsNan(value) ? 1 : 0;
+    }
+};
 
 bool hasMissingValues(const viskores::cont::UnknownArrayHandle &array)
 {
+    viskores::cont::Invoker invoke;
     bool missing = false;
     withFloatType(array, [&](auto d) {
         using D = decltype(d);
-        for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat(); c++) {
+        for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat() && !missing; ++c) {
+            viskores::cont::ArrayHandle<viskores::Id> isMissing;
+            invoke(IsMissingWorklet{}, array.ExtractComponent<D>(c), isMissing);
+            missing = viskores::cont::Algorithm::Reduce(isMissing, viskores::Id(0)) > 0;
             if (missing)
                 break;
-            auto portal = array.ExtractComponent<D>(c).ReadPortal();
-            for (viskores::Id i = 0; i < portal.GetNumberOfValues(); ++i) {
-                if (std::isnan(portal.Get(i))) {
-                    missing = true;
-                    break;
-                }
-            }
         }
     });
     return missing;
