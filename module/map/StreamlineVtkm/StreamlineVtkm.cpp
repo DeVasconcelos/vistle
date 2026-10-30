@@ -4,6 +4,7 @@
 #include <viskores/cont/ArrayHandleCast.h>
 #include <viskores/cont/EnvironmentTracker.h>
 #include <viskores/cont/Invoker.h>
+#include <viskores/cont/UnknownArrayHandle.h>
 #include <viskores/filter/FieldSelection.h>
 #include <viskores/filter/flow/Streamline.h>
 #include <viskores/filter/resampling/Probe.h>
