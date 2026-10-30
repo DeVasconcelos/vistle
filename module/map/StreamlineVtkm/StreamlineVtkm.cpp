@@ -1,13 +1,11 @@
-#include <map>
-
 #include <algorithm>
 #include <cmath>
 #include <type_traits>
-#include <vector>
 
 #include <viskores/TypeList.h>
 #include <viskores/cont/ArrayHandleStride.h>
 #include <viskores/cont/EnvironmentTracker.h>
+#include <viskores/cont/UnknownArrayHandle.h>
 #include <viskores/filter/FieldSelection.h>
 #include <viskores/filter/entity_extraction/Threshold.h>
 #include <viskores/filter/resampling/Probe.h>

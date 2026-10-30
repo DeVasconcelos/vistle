@@ -2,7 +2,6 @@
 #define VISTLE_STREAMLINEVTKM_STREAMLINEVTKM_H
 
 #include <cstddef>
-#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -10,7 +9,6 @@
 #include <viskores/cont/ArrayHandle.h>
 #include <viskores/cont/DataSet.h>
 #include <viskores/cont/PartitionedDataSet.h>
-#include <viskores/cont/UnknownArrayHandle.h>
 #include <viskores/filter/Filter.h>
 #include <viskores/Particle.h>
 
