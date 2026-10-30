@@ -281,20 +281,6 @@ bool hasMissingValues(const viskores::cont::UnknownArrayHandle &array)
     return missing;
 }
 
-// Points that are not inside any input block (e.g. the last step beyond the domain) repeat the previous value.
-void fillRemainingMissingValues(const viskores::cont::UnknownArrayHandle &array)
-{
-    withFloatType(array, [&](auto d) {
-        using D = decltype(d);
-        for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat(); ++c) {
-            auto portal = array.ExtractComponent<D>(c, viskores::CopyFlag::Off).WritePortal();
-            for (viskores::Id i = 0; i < portal.GetNumberOfValues(); ++i) {
-                if (std::isnan(portal.Get(i)))
-                    portal.Set(i, i > 0 ? portal.Get(i - 1) : D(0));
-            }
-        }
-    });
-}
 } // namespace
 
 void StreamlineVtkm::resolveMissingValues(const viskores::cont::DataSet &streamlines,
@@ -350,9 +336,7 @@ void StreamlineVtkm::resolveMissingValues(const viskores::cont::DataSet &streaml
         if (!anyMissing)
             return;
     }
-
-    for (const auto &name: names)
-        fillRemainingMissingValues(streamlines.GetPointField(name).GetData());
+    // points that lie in no input block (e.g. the last step beyond the domain) stay NaN
 }
 
 bool StreamlineVtkm::removeDegenerateStreamlines(viskores::cont::DataSet &streamlines) const
