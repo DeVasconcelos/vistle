@@ -289,13 +289,11 @@ void StreamlineVtkm::resolveMissingValues(const viskores::cont::DataSet &streaml
     // the filter samples each point on the block that traced it, which fails at block boundaries: probe those
     // points on all input blocks instead
     std::vector<std::string> names;
-    for (int port = 0; port < m_numPorts; ++port) {
-        if (!m_outputPorts[port]->isConnected())
-            continue;
-        const auto name = getFieldName(port);
-        if (streamlines.HasPointField(name) && hasMissingValues(streamlines.GetPointField(name).GetData()))
-            names.push_back(name);
+    for (auto i = 0; i < streamlines.GetNumberOfFields(); i++) {
+        if (hasMissingValues(streamlines.GetField(i).GetData()))
+            names.push_back(streamlines.GetField(i).GetName());
     }
+
     if (names.empty())
         return;
 
@@ -312,17 +310,13 @@ void StreamlineVtkm::resolveMissingValues(const viskores::cont::DataSet &streaml
 
         auto probeFilter = viskores::filter::resampling::Probe();
         probeFilter.SetGeometry(geometry);
-        viskores::filter::FieldSelection selection(viskores::filter::FieldSelection::Mode::None);
-        for (const auto &name: names)
-            selection.AddField(name, viskores::cont::Field::Association::Points);
-        probeFilter.SetFieldsToPass(selection);
 
         viskores::cont::DataSet probeOutput;
         if (!this->tryToExecuteFilter(probeFilter, blockData, probeOutput))
             continue;
 
-        viskores::cont::ArrayHandle<viskores::UInt8> hidden;
-        probeOutput.GetField("HIDDEN", viskores::cont::Field::Association::Points).GetData().AsArrayHandle(hidden);
+        viskores::cont::ArrayHandle<viskores::UInt8> blockHidden;
+        probeOutput.GetField("HIDDEN", viskores::cont::Field::Association::Points).GetData().AsArrayHandle(blockHidden);
 
         bool anyMissing = false;
         for (const auto &name: names) {
@@ -330,13 +324,12 @@ void StreamlineVtkm::resolveMissingValues(const viskores::cont::DataSet &streaml
                 continue;
             auto dst = streamlines.GetPointField(name).GetData();
             mergeMissingValues(dst, probeOutput.GetField(name, viskores::cont::Field::Association::Points).GetData(),
-                               hidden);
+                               blockHidden);
             anyMissing = anyMissing || hasMissingValues(dst);
         }
         if (!anyMissing)
             return;
     }
-    // points that lie in no input block (e.g. the last step beyond the domain) stay NaN
 }
 
 bool StreamlineVtkm::removeDegenerateStreamlines(viskores::cont::DataSet &streamlines) const
