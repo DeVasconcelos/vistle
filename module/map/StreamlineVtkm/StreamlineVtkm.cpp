@@ -270,11 +270,15 @@ bool hasMissingValues(const viskores::cont::UnknownArrayHandle &array)
     bool missing = false;
     withFloatType(array, [&](auto d) {
         using D = decltype(d);
-        for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat(); ++c) {
+        for (viskores::IdComponent c = 0; c < array.GetNumberOfComponentsFlat(); c++) {
+            if (missing)
+                break;
             auto portal = array.ExtractComponent<D>(c).ReadPortal();
             for (viskores::Id i = 0; i < portal.GetNumberOfValues(); ++i) {
-                if (std::isnan(portal.Get(i)))
+                if (std::isnan(portal.Get(i))) {
                     missing = true;
+                    break;
+                }
             }
         }
     });
